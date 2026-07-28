@@ -53,3 +53,31 @@ def test_cross_segment_topk_is_globally_ordered(tmp_path) -> None:
     assert [hit.id for hit in result.hits] == [2, 3]
     assert collection.count() == 3
 
+
+def test_many_stale_high_scores_cannot_hide_a_visible_lower_candidate(tmp_path) -> None:
+    collection = Database.open(tmp_path).create_collection(
+        "items",
+        dimension=2,
+        distance=Distance.DOT,
+    )
+    collection.upsert(
+        [
+            *(
+                Point(point_id, (11.0 - point_id, 0.0), {})
+                for point_id in range(1, 6)
+            ),
+            Point(99, (5.0, 0.0), {}),
+        ]
+    )
+    collection.flush()
+    collection.upsert(
+        [
+            Point(point_id, (point_id / 10.0, 0.0), {})
+            for point_id in range(1, 6)
+        ]
+    )
+    collection.flush()
+
+    result = collection.search(SearchRequest((1.0, 0.0), limit=1, exact=True))
+
+    assert [hit.id for hit in result.hits] == [99]

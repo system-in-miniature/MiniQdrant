@@ -40,3 +40,15 @@ def test_missing_current_manifest_is_corruption(tmp_path) -> None:
     with pytest.raises(CorruptionError, match="manifest"):
         store.load_current()
 
+
+@pytest.mark.parametrize(
+    "segments",
+    [
+        ("../outside",),
+        ("seg-a/child",),
+        ("seg-a", "seg-a"),
+    ],
+)
+def test_manifest_rejects_unsafe_or_duplicate_segment_ids(segments) -> None:
+    with pytest.raises(ValueError, match="segment"):
+        manifest(1, *segments)

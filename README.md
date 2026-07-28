@@ -19,6 +19,7 @@ query → filter planner → immutable segments → version resolution → globa
   Euclidean scoring;
 - immutable JSON payloads, nested filter ASTs, payload field indexes, and
   cardinality-aware per-segment planning;
+- versioned full-payload replacement, shallow field merge, and field deletion;
 - deterministic exact Top-K and HNSW candidate search;
 - scalar int8 candidate scoring with oversampling and exact float rescoring;
 - WAL-before-apply upsert/delete operations, monotonic versions, tombstones,
@@ -67,6 +68,8 @@ Thin CLI:
 uv run miniqdrant create ./demo-data items --dimension 3 --distance cosine
 uv run miniqdrant upsert ./demo-data items ./points.jsonl
 uv run miniqdrant search ./demo-data items '[1,0,0]' --limit 5
+uv run miniqdrant payload-index ./demo-data items category keyword
+uv run miniqdrant info ./demo-data items
 uv run miniqdrant snapshot ./demo-data items ./snapshots/items-001
 uv run miniqdrant restore ./snapshots/items-001 ./restored items
 ```

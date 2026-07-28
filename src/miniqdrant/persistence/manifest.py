@@ -3,12 +3,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from miniqdrant.errors import CorruptionError
 from miniqdrant.persistence.fsync import fsync_directory
+
+_SEGMENT_ID = re.compile(r"^seg-[A-Za-z0-9_-]+$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +27,10 @@ class Manifest:
         if self.replay_boundary < 0:
             raise ValueError("manifest replay boundary must be non-negative")
         object.__setattr__(self, "segment_ids", tuple(self.segment_ids))
+        if len(set(self.segment_ids)) != len(self.segment_ids):
+            raise ValueError("manifest segment IDs must be unique")
+        if any(not _SEGMENT_ID.fullmatch(segment_id) for segment_id in self.segment_ids):
+            raise ValueError("manifest contains an unsafe segment ID")
 
     @property
     def filename(self) -> str:
@@ -127,4 +134,3 @@ def _write_fsynced(path: Path, value: bytes) -> None:
         stream.write(value)
         stream.flush()
         os.fsync(stream.fileno())
-

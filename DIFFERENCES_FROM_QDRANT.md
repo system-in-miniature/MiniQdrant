@@ -23,3 +23,5 @@ The HNSW implementation favors determinism and inspectability over throughput.
 Scalar quantization scans encoded vectors to choose an oversampled candidate
 set; it is not a compressed production SIMD index. Durability policies expose
 teaching boundaries, not a distributed write-consistency contract.
+Payload field merge/delete is intentionally shallow; nested patch languages and
+Qdrant API compatibility are outside scope.

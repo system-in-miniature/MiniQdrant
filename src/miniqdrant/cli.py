@@ -8,6 +8,7 @@ from uuid import UUID
 
 from miniqdrant.config import Distance
 from miniqdrant.database import Database
+from miniqdrant.filters.index import PayloadSchema
 from miniqdrant.json_values import thaw_json
 from miniqdrant.models import Point, SearchRequest
 
@@ -64,6 +65,24 @@ def _parser() -> argparse.ArgumentParser:
     optimize.add_argument("database")
     optimize.add_argument("collection")
     optimize.set_defaults(run=_optimize)
+
+    payload_index = commands.add_parser(
+        "payload-index",
+        help="create a payload field index",
+    )
+    payload_index.add_argument("database")
+    payload_index.add_argument("collection")
+    payload_index.add_argument("field")
+    payload_index.add_argument(
+        "schema",
+        choices=tuple(item.value for item in PayloadSchema),
+    )
+    payload_index.set_defaults(run=_payload_index)
+
+    info = commands.add_parser("info", help="describe a collection")
+    info.add_argument("database")
+    info.add_argument("collection")
+    info.set_defaults(run=_info)
 
     snapshot = commands.add_parser("snapshot", help="create an atomic snapshot")
     snapshot.add_argument("database")
@@ -145,6 +164,28 @@ def _optimize(options: argparse.Namespace) -> dict[str, object]:
         collection = database.collection(options.collection)
         collection.optimize()
         return {"segments": collection.segment_statistics().segment_count}
+
+
+def _payload_index(options: argparse.Namespace) -> dict[str, object]:
+    with _database(options.database) as database:
+        database.collection(options.collection).create_payload_index(
+            options.field,
+            options.schema,
+        )
+        return {"field": options.field, "schema": options.schema}
+
+
+def _info(options: argparse.Namespace) -> dict[str, object]:
+    with _database(options.database) as database:
+        collection = database.collection(options.collection)
+        return {
+            "count": collection.count(),
+            "dimension": collection.config.dimension,
+            "distance": collection.config.distance.value,
+            "name": collection.name,
+            "payload_indexes": collection.payload_index_schemas,
+            "segments": collection.segment_statistics().segment_count,
+        }
 
 
 def _snapshot(options: argparse.Namespace) -> dict[str, object]:

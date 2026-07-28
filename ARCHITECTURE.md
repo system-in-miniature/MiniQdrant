@@ -19,7 +19,9 @@ write storage roots directly.
 ## Mutation and visibility
 
 An upsert/delete batch is fully validated, appended as one WAL operation, and
-only then applied to the mutable segment. The WAL sequence is its version.
+only then applied to the mutable segment. Payload replace/merge/key-delete
+operations produce a complete new point image and reuse the same upsert WAL
+contract. The WAL sequence is its version.
 Every read computes the greatest record version per external point ID; a
 greatest-version tombstone hides every older image.
 

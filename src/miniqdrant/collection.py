@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import math
 import shutil
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
-from threading import RLock, Thread
+from threading import Condition, Lock, RLock, Thread
 from uuid import uuid4
 
 from miniqdrant.config import CollectionConfig, config_fingerprint
@@ -14,6 +14,7 @@ from miniqdrant.errors import CorruptionError, InvalidFilterError
 from miniqdrant.filters import Filter
 from miniqdrant.filters.index import PayloadSchema
 from miniqdrant.ids import PointId, canonicalize_point_id
+from miniqdrant.json_values import freeze_json_object, thaw_json
 from miniqdrant.lifecycle import Lifecycle
 from miniqdrant.models import (
     Point,
@@ -61,11 +62,14 @@ class CollectionView:
         handles: tuple[SegmentHandle, ...],
         mutable: ImmutableSegment | None,
         latest: dict[PointId, StoredPoint],
+        on_close: Callable[[], None],
     ) -> None:
         self._config = config
         self._handles = handles
         self._mutable = mutable
         self._latest = latest
+        self._on_close = on_close
+        self._close_lock = Lock()
         self._closed = False
 
     @property
@@ -84,11 +88,15 @@ class CollectionView:
         )
 
     def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        for handle in self._handles:
-            handle.release()
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                for handle in self._handles:
+                    handle.release()
+            finally:
+                self._on_close()
 
     def __enter__(self) -> CollectionView:
         return self
@@ -122,6 +130,8 @@ class Collection(Lifecycle):
         self._payload_schemas = payload_schemas
         self._failure_injector = failure_injector or (lambda _stage: None)
         self._update_lock = RLock()
+        self._view_condition = Condition(self._update_lock)
+        self._active_views = 0
         self._optimizer_lock = RLock()
         self._mutable = self._new_mutable()
 
@@ -251,6 +261,43 @@ class Collection(Lifecycle):
             self._apply_wal_record(record)
             return record.sequence
 
+    def replace_payload(
+        self,
+        point_ids: Iterable[object],
+        payload: Mapping[str, object],
+    ) -> int | None:
+        validated = thaw_json(freeze_json_object(payload))
+        return self._mutate_payload(
+            point_ids,
+            lambda _current: validated,
+        )
+
+    def merge_payload(
+        self,
+        point_ids: Iterable[object],
+        fields: Mapping[str, object],
+    ) -> int | None:
+        patch = thaw_json(freeze_json_object(fields))
+        return self._mutate_payload(
+            point_ids,
+            lambda current: {**current, **patch},
+        )
+
+    def delete_payload_keys(
+        self,
+        point_ids: Iterable[object],
+        keys: Iterable[str],
+    ) -> int | None:
+        removed = tuple(keys)
+        if any(not isinstance(key, str) for key in removed):
+            raise ValueError("payload keys must be strings")
+        return self._mutate_payload(
+            point_ids,
+            lambda current: {
+                key: value for key, value in current.items() if key not in removed
+            },
+        )
+
     def create_payload_index(self, path: str, schema: PayloadSchema | str) -> None:
         self._ensure_open()
         normalized = PayloadSchema(schema)
@@ -326,7 +373,14 @@ class Collection(Lifecycle):
                 tuple(handle.segment for handle in handles),
                 mutable_records,
             )
-            return CollectionView(self._config, handles, mutable, latest)
+            self._active_views += 1
+            return CollectionView(
+                self._config,
+                handles,
+                mutable,
+                latest,
+                self._release_view,
+            )
 
     def segment_statistics(self) -> SegmentStatistics:
         self._ensure_open()
@@ -345,6 +399,7 @@ class Collection(Lifecycle):
     def optimize(self, *, gate: OptimizationGate | None = None) -> None:
         self._ensure_open()
         with self._optimizer_lock:
+            self._ensure_open()
             self._optimize(gate)
 
     def start_optimize(
@@ -394,19 +449,62 @@ class Collection(Lifecycle):
     def close(self) -> None:
         if not self._mark_closed():
             return
-        self._wal.flush()
-        self._wal.close()
+        with self._optimizer_lock, self._view_condition:
+            while self._active_views:
+                self._view_condition.wait()
+            self._wal.flush()
+            self._wal.close()
 
     def simulate_process_loss(self) -> None:
         if not self._mark_closed():
             return
-        self._wal.close()
+        with self._optimizer_lock, self._update_lock:
+            self._wal.close()
 
     def _new_mutable(self) -> MutableSegment:
         mutable = MutableSegment(self._config)
         for path, schema in self._payload_schemas.items():
             mutable.create_payload_index(path, schema)
         return mutable
+
+    def _release_view(self) -> None:
+        with self._view_condition:
+            if self._active_views < 1:
+                raise RuntimeError("collection view accounting underflow")
+            self._active_views -= 1
+            if self._active_views == 0:
+                self._view_condition.notify_all()
+
+    def _mutate_payload(
+        self,
+        point_ids: Iterable[object],
+        transform: Callable[[dict[str, object]], Mapping[str, object]],
+    ) -> int | None:
+        self._ensure_open()
+        identifiers = tuple(
+            dict.fromkeys(canonicalize_point_id(item) for item in point_ids)
+        )
+        if not identifiers:
+            raise ValueError("payload mutation must contain point ids")
+        with self._update_lock:
+            latest = self._latest_records()
+            points = tuple(
+                Point(
+                    point.id,
+                    point.vector,
+                    transform(thaw_json(point.payload)),
+                )
+                for point_id in identifiers
+                if (point := latest.get(point_id)) is not None and not point.deleted
+            )
+            if not points:
+                return None
+            for point in points:
+                validate_point(point, self._config)
+            record = self._wal.append(UpsertOperation(points))
+            self._failure_injector("after_wal_fsync")
+            self._apply_wal_record(record)
+            return record.sequence
 
     def _apply_wal_record(self, record: WalRecord) -> None:
         if isinstance(record.operation, UpsertOperation):
@@ -556,18 +654,21 @@ def _search(
         raise InvalidFilterError("search filter must be a Filter")
     if request.score_threshold is not None and not math.isfinite(request.score_threshold):
         raise ValueError("score threshold must be finite")
-    local_limit = request.limit + max(0, len(segments) - 1)
     segment_results = tuple(
         segment.search(
             SegmentSearchRequest(
                 vector=tuple(request.vector),
-                limit=local_limit,
+                limit=min(
+                    segment.live_count,
+                    request.limit + _stale_live_count(segment, latest),
+                ),
                 filter=request.filter,
                 exact=request.exact,
                 ef_search=request.ef_search,
             )
         )
         for segment in segments
+        if segment.live_count
     )
     collector = TopK(request.limit)
     for result in segment_results:
@@ -592,4 +693,17 @@ def _search(
     return SearchResult(
         hits,
         plan=tuple(result.strategy for result in segment_results),
+    )
+
+
+def _stale_live_count(
+    segment: ImmutableSegment,
+    latest: dict[PointId, StoredPoint],
+) -> int:
+    return sum(
+        visible is None
+        or visible.deleted
+        or visible.version != record.version
+        for record in segment.iter_live()
+        for visible in (latest.get(record.id),)
     )

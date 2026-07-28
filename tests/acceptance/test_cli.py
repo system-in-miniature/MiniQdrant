@@ -57,3 +57,29 @@ def test_cli_snapshot_and_restore(tmp_path) -> None:
     result = _cli("search", tmp_path / "restored", "copy", "[1,0]")
 
     assert json.loads(result.stdout)["hits"][0]["id"] == 7
+
+
+def test_cli_payload_index_and_info_use_collection_api(tmp_path) -> None:
+    _cli("create", tmp_path / "db", "items", "--dimension", 2)
+
+    indexed = _cli(
+        "payload-index",
+        tmp_path / "db",
+        "items",
+        "category",
+        "keyword",
+    )
+    info = _cli("info", tmp_path / "db", "items")
+
+    assert json.loads(indexed.stdout) == {
+        "field": "category",
+        "schema": "keyword",
+    }
+    assert json.loads(info.stdout) == {
+        "count": 0,
+        "dimension": 2,
+        "distance": "cosine",
+        "name": "items",
+        "payload_indexes": {"category": "keyword"},
+        "segments": 0,
+    }
