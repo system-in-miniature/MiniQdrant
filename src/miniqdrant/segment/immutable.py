@@ -8,7 +8,9 @@ from miniqdrant.filters.index import PayloadIndexSet, PayloadSchema
 from miniqdrant.ids import PointId
 from miniqdrant.index.hnsw import HnswIndex
 from miniqdrant.index.plain import PlainVectorIndex
+from miniqdrant.index.quantization import ScalarQuantizedIndex
 from miniqdrant.models import StoredPoint, normalize_cosine, validate_vector
+from miniqdrant.query.executor import execute_quantized_rescore
 from miniqdrant.query.planner import QueryPlanner, SegmentFacts, Strategy
 from miniqdrant.segment.base import (
     ScoredCandidate,
@@ -40,6 +42,11 @@ class ImmutableSegment:
                 config=config.hnsw,
             )
             if indexed and self.live_count
+            else None
+        )
+        self._quantized = (
+            ScalarQuantizedIndex(config.distance, self.iter_live())
+            if indexed and config.quantization is not None and self.live_count
             else None
         )
 
@@ -121,6 +128,7 @@ class ImmutableSegment:
                 total_points=self.live_count,
                 filtered=candidates.estimate if request.filter is not None else None,
                 has_hnsw=self._hnsw is not None,
+                has_quantization=self._quantized is not None,
                 exact_requested=request.exact,
             )
         )
@@ -138,6 +146,18 @@ class ImmutableSegment:
                 result.visited_count,
                 plan.strategy.value,
             )
+
+        if plan.strategy is Strategy.QUANTIZED_HNSW_RESCORE:
+            assert self._quantized is not None
+            assert self._config.quantization is not None
+            result, visited = execute_quantized_rescore(
+                self._quantized,
+                query,
+                candidates,
+                limit=request.limit,
+                oversampling=self._config.quantization.oversampling,
+            )
+            return SegmentSearchResult(result, visited, plan.strategy.value)
 
         assert self._hnsw is not None
         local_limit = min(
