@@ -19,8 +19,10 @@ from miniqdrant.errors import (
     SnapshotError,
 )
 from miniqdrant.models import Point, SearchHit, SearchRequest, SearchResult, StoredPoint
+from miniqdrant.topk import Candidate, TopK
 
 __all__ = [
+    "Candidate",
     "ClosedResourceError",
     "CollectionConfig",
     "CollectionExistsError",
@@ -42,5 +44,5 @@ __all__ = [
     "SearchResult",
     "SnapshotError",
     "StoredPoint",
+    "TopK",
 ]
-
