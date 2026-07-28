@@ -1,3 +1,4 @@
+from miniqdrant.collection import Collection
 from miniqdrant.config import (
     CollectionConfig,
     Distance,
@@ -5,6 +6,7 @@ from miniqdrant.config import (
     OptimizerConfig,
     ScalarQuantizationConfig,
 )
+from miniqdrant.database import Database
 from miniqdrant.errors import (
     ClosedResourceError,
     CollectionExistsError,
@@ -26,10 +28,12 @@ from miniqdrant.topk import Candidate, TopK
 __all__ = [
     "Candidate",
     "ClosedResourceError",
+    "Collection",
     "CollectionConfig",
     "CollectionExistsError",
     "CollectionNotFoundError",
     "CorruptionError",
+    "Database",
     "Distance",
     "Filter",
     "HasId",
