@@ -31,6 +31,7 @@ from miniqdrant.persistence.metadata import (
     read_collection_metadata,
     write_collection_metadata,
 )
+from miniqdrant.persistence.snapshot import create_collection_snapshot
 from miniqdrant.persistence.wal import (
     DeleteOperation,
     Durability,
@@ -372,6 +373,23 @@ class Collection(Lifecycle):
 
     def vacuum(self) -> None:
         self.optimize()
+
+    def create_snapshot(
+        self,
+        destination: str | Path,
+        *,
+        failure_injector: Callable[[str], None] | None = None,
+    ) -> Path:
+        self._ensure_open()
+        with self._optimizer_lock, self._update_lock:
+            self.flush()
+            self._wal.flush()
+            return create_collection_snapshot(
+                self._path,
+                Path(destination),
+                self._manifest,
+                failure_injector=failure_injector,
+            )
 
     def close(self) -> None:
         if not self._mark_closed():
