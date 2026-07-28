@@ -8,6 +8,7 @@ from threading import RLock
 from miniqdrant.config import CollectionConfig
 from miniqdrant.errors import InvalidFilterError
 from miniqdrant.filters import Filter
+from miniqdrant.filters.index import PayloadSchema
 from miniqdrant.ids import PointId, canonicalize_point_id
 from miniqdrant.lifecycle import Lifecycle
 from miniqdrant.models import (
@@ -71,6 +72,11 @@ class Collection(Lifecycle):
             for point_id in identifiers:
                 self._mutable.apply_delete(point_id, version)
             return version
+
+    def create_payload_index(self, path: str, schema: PayloadSchema | str) -> None:
+        self._ensure_open()
+        with self._update_lock:
+            self._mutable.create_payload_index(path, PayloadSchema(schema))
 
     def retrieve(self, point_ids: Iterable[object]) -> tuple[StoredPoint, ...]:
         self._ensure_open()
@@ -140,4 +146,3 @@ class Collection(Lifecycle):
             payload=point.payload if request.with_payload else None,
             vector=point.vector if request.with_vector else None,
         )
-

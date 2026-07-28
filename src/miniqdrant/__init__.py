@@ -20,13 +20,22 @@ from miniqdrant.errors import (
     SchemaMismatchError,
     SnapshotError,
 )
-from miniqdrant.filters import Filter, HasId, Match, Range, matches_filter
+from miniqdrant.filters import (
+    CardinalityEstimate,
+    Filter,
+    HasId,
+    Match,
+    PayloadSchema,
+    Range,
+    matches_filter,
+)
 from miniqdrant.models import Point, SearchHit, SearchRequest, SearchResult, StoredPoint
 from miniqdrant.segment import MutableSegment, SegmentSearchRequest
 from miniqdrant.topk import Candidate, TopK
 
 __all__ = [
     "Candidate",
+    "CardinalityEstimate",
     "ClosedResourceError",
     "Collection",
     "CollectionConfig",
@@ -46,6 +55,7 @@ __all__ = [
     "MutableSegment",
     "OptimizerConfig",
     "PayloadIndexError",
+    "PayloadSchema",
     "Point",
     "Range",
     "ScalarQuantizationConfig",
