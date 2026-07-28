@@ -11,6 +11,7 @@ from miniqdrant.index.plain import PlainVectorIndex
 from miniqdrant.models import StoredPoint, normalize_cosine, validate_vector
 from miniqdrant.query.planner import QueryPlanner, SegmentFacts, Strategy
 from miniqdrant.segment.base import (
+    ScoredCandidate,
     SegmentSearchRequest,
     SegmentSearchResult,
 )
@@ -87,6 +88,16 @@ class ImmutableSegment:
 
     def create_payload_index(self, path: str, schema: PayloadSchema) -> None:
         self._payload_indexes.create(path, schema, self.iter_live())
+
+    def search_exact(
+        self,
+        query: tuple[float, ...],
+        *,
+        limit: int,
+    ) -> tuple[ScoredCandidate, ...]:
+        return self.search(
+            SegmentSearchRequest(query, limit, exact=True)
+        ).candidates
 
     def search(self, request: SegmentSearchRequest) -> SegmentSearchResult:
         query = validate_vector(request.vector, self._config.dimension)

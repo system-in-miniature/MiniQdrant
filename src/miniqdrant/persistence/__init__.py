@@ -1,3 +1,4 @@
+from miniqdrant.persistence.manifest import Manifest, ManifestStore
 from miniqdrant.persistence.wal import (
     DeleteOperation,
     Durability,
@@ -10,9 +11,10 @@ from miniqdrant.persistence.wal import (
 __all__ = [
     "DeleteOperation",
     "Durability",
+    "Manifest",
+    "ManifestStore",
     "Operation",
     "UpsertOperation",
     "Wal",
     "WalRecord",
 ]
-
