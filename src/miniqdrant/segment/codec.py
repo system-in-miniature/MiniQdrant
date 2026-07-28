@@ -8,16 +8,14 @@ import struct
 import tempfile
 import zlib
 from collections.abc import Iterable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
 from miniqdrant.config import (
     CollectionConfig,
-    Distance,
-    HnswConfig,
-    OptimizerConfig,
-    ScalarQuantizationConfig,
+    config_from_dict,
+    config_to_dict,
 )
 from miniqdrant.errors import CorruptionError
 from miniqdrant.filters.index import PayloadSchema
@@ -88,7 +86,7 @@ class SegmentImage:
     def semantic_fingerprint(self) -> str:
         payload = {
             "segment_id": self.segment_id,
-            "config": _encode_config(self.config),
+            "config": config_to_dict(self.config),
             "records": [_encode_record(record) for record in self.records],
             "payload_schemas": {
                 path: schema.value for path, schema in sorted(self.payload_schemas.items())
@@ -119,7 +117,7 @@ class SegmentCodec:
             meta = {
                 "format_version": _VERSION,
                 "segment_id": image.segment_id,
-                "config": _encode_config(image.config),
+                "config": config_to_dict(image.config),
                 "indexed": image.indexed,
                 "checksums": checksums,
             }
@@ -206,7 +204,7 @@ def _decode_image(meta: dict[str, object], payloads: dict[str, object]) -> Segme
     }
     return SegmentImage(
         segment_id=str(meta["segment_id"]),
-        config=_decode_config(meta["config"]),
+        config=config_from_dict(meta["config"]),
         records=records,
         payload_schemas=schemas,
         indexed=bool(meta["indexed"]),
@@ -235,35 +233,6 @@ def _decode_blob(value: bytes) -> object:
         return json.loads(value[_HEADER.size : _HEADER.size + length])
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise CorruptionError("invalid segment blob JSON") from error
-
-
-def _encode_config(config: CollectionConfig) -> dict[str, object]:
-    return {
-        "dimension": config.dimension,
-        "distance": config.distance.value,
-        "hnsw": asdict(config.hnsw),
-        "optimizer": asdict(config.optimizer),
-        "quantization": (
-            None if config.quantization is None else asdict(config.quantization)
-        ),
-    }
-
-
-def _decode_config(value: object) -> CollectionConfig:
-    if not isinstance(value, dict):
-        raise ValueError("segment config must be an object")
-    quantization = value["quantization"]
-    return CollectionConfig(
-        dimension=int(value["dimension"]),
-        distance=Distance(value["distance"]),
-        hnsw=HnswConfig(**value["hnsw"]),
-        optimizer=OptimizerConfig(**value["optimizer"]),
-        quantization=(
-            None
-            if quantization is None
-            else ScalarQuantizationConfig(**quantization)
-        ),
-    )
 
 
 def _encode_record(record: StoredPoint) -> dict[str, object]:
@@ -358,4 +327,3 @@ def _write_fsynced(path: Path, value: bytes) -> None:
         stream.write(value)
         stream.flush()
         os.fsync(stream.fileno())
-

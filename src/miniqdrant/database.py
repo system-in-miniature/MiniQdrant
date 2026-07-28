@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import shutil
+from collections.abc import Callable
 from pathlib import Path
 from threading import RLock
 
@@ -17,22 +19,49 @@ from miniqdrant.errors import (
     CollectionNotFoundError,
 )
 from miniqdrant.lifecycle import Lifecycle
+from miniqdrant.persistence.wal import Durability
 
 _COLLECTION_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 
 
 class Database(Lifecycle):
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        durability: Durability,
+        failure_injector: Callable[[str], None] | None,
+    ) -> None:
         super().__init__()
         self._path = path
+        self._durability = Durability(durability)
+        self._failure_injector = failure_injector
         self._collections_path = path / "collections"
         self._collections_path.mkdir(parents=True, exist_ok=True)
         self._lock = RLock()
         self._collections: dict[str, Collection] = {}
+        for collection_path in sorted(self._collections_path.iterdir()):
+            if collection_path.is_dir() and (collection_path / "collection.json").is_file():
+                collection = Collection.open(
+                    collection_path,
+                    durability=self._durability,
+                    failure_injector=failure_injector,
+                )
+                self._collections[collection.name] = collection
 
     @classmethod
-    def open(cls, path: str | Path) -> Database:
-        return cls(Path(path))
+    def open(
+        cls,
+        path: str | Path,
+        *,
+        durability: Durability = Durability.ALWAYS,
+        failure_injector: Callable[[str], None] | None = None,
+    ) -> Database:
+        return cls(
+            Path(path),
+            durability=durability,
+            failure_injector=failure_injector,
+        )
 
     @property
     def path(self) -> Path:
@@ -61,8 +90,15 @@ class Database(Lifecycle):
             if name in self._collections:
                 raise CollectionExistsError(f"collection already exists: {name}")
             path = self._collections_path / name
-            path.mkdir(parents=True, exist_ok=False)
-            collection = Collection(name, path, config)
+            if path.exists():
+                raise CollectionExistsError(f"collection directory already exists: {name}")
+            collection = Collection.create(
+                name,
+                path,
+                config,
+                durability=self._durability,
+                failure_injector=self._failure_injector,
+            )
             self._collections[name] = collection
             return collection
 
@@ -82,6 +118,7 @@ class Database(Lifecycle):
             except KeyError as error:
                 raise CollectionNotFoundError(f"collection not found: {name}") from error
             collection.close()
+            shutil.rmtree(collection.path)
 
     def close(self) -> None:
         if not self._mark_closed():
@@ -91,6 +128,15 @@ class Database(Lifecycle):
             self._collections.clear()
         for collection in collections:
             collection.close()
+
+    def simulate_process_loss(self) -> None:
+        if not self._mark_closed():
+            return
+        with self._lock:
+            collections = tuple(self._collections.values())
+            self._collections.clear()
+        for collection in collections:
+            collection.simulate_process_loss()
 
 
 def _validate_collection_name(name: str) -> None:

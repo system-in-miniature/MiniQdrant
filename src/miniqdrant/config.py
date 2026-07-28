@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import hashlib
+import json
+from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 
 
@@ -66,3 +68,41 @@ class CollectionConfig:
             raise ValueError("collection dimension must be positive")
         if not isinstance(self.distance, Distance):
             object.__setattr__(self, "distance", Distance(self.distance))
+
+
+def config_to_dict(config: CollectionConfig) -> dict[str, object]:
+    return {
+        "dimension": config.dimension,
+        "distance": config.distance.value,
+        "hnsw": asdict(config.hnsw),
+        "optimizer": asdict(config.optimizer),
+        "quantization": (
+            None if config.quantization is None else asdict(config.quantization)
+        ),
+    }
+
+
+def config_from_dict(value: object) -> CollectionConfig:
+    if not isinstance(value, dict):
+        raise ValueError("collection config must be an object")
+    quantization = value["quantization"]
+    return CollectionConfig(
+        dimension=int(value["dimension"]),
+        distance=Distance(value["distance"]),
+        hnsw=HnswConfig(**value["hnsw"]),
+        optimizer=OptimizerConfig(**value["optimizer"]),
+        quantization=(
+            None
+            if quantization is None
+            else ScalarQuantizationConfig(**quantization)
+        ),
+    )
+
+
+def config_fingerprint(config: CollectionConfig) -> str:
+    encoded = json.dumps(
+        config_to_dict(config),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()

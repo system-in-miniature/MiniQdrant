@@ -30,6 +30,7 @@ from miniqdrant.filters import (
     matches_filter,
 )
 from miniqdrant.models import Point, SearchHit, SearchRequest, SearchResult, StoredPoint
+from miniqdrant.persistence import Durability
 from miniqdrant.segment import MutableSegment, SegmentSearchRequest
 from miniqdrant.topk import Candidate, TopK
 
@@ -44,6 +45,7 @@ __all__ = [
     "CorruptionError",
     "Database",
     "Distance",
+    "Durability",
     "Filter",
     "HasId",
     "HnswConfig",
