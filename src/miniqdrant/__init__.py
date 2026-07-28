@@ -20,6 +20,7 @@ from miniqdrant.errors import (
 )
 from miniqdrant.filters import Filter, HasId, Match, Range, matches_filter
 from miniqdrant.models import Point, SearchHit, SearchRequest, SearchResult, StoredPoint
+from miniqdrant.segment import MutableSegment, SegmentSearchRequest
 from miniqdrant.topk import Candidate, TopK
 
 __all__ = [
@@ -38,6 +39,7 @@ __all__ = [
     "InvalidVectorError",
     "Match",
     "MiniQdrantError",
+    "MutableSegment",
     "OptimizerConfig",
     "PayloadIndexError",
     "Point",
@@ -47,6 +49,7 @@ __all__ = [
     "SearchHit",
     "SearchRequest",
     "SearchResult",
+    "SegmentSearchRequest",
     "SnapshotError",
     "StoredPoint",
     "TopK",
