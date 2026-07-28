@@ -18,6 +18,7 @@ from miniqdrant.errors import (
     SchemaMismatchError,
     SnapshotError,
 )
+from miniqdrant.filters import Filter, HasId, Match, Range, matches_filter
 from miniqdrant.models import Point, SearchHit, SearchRequest, SearchResult, StoredPoint
 from miniqdrant.topk import Candidate, TopK
 
@@ -29,14 +30,18 @@ __all__ = [
     "CollectionNotFoundError",
     "CorruptionError",
     "Distance",
+    "Filter",
+    "HasId",
     "HnswConfig",
     "InvalidFilterError",
     "InvalidPointError",
     "InvalidVectorError",
+    "Match",
     "MiniQdrantError",
     "OptimizerConfig",
     "PayloadIndexError",
     "Point",
+    "Range",
     "ScalarQuantizationConfig",
     "SchemaMismatchError",
     "SearchHit",
@@ -45,4 +50,5 @@ __all__ = [
     "SnapshotError",
     "StoredPoint",
     "TopK",
+    "matches_filter",
 ]
