@@ -68,6 +68,14 @@ class ImmutableSegment:
         return len(self._records)
 
     @property
+    def deleted_count(self) -> int:
+        return self.total_count - self.live_count
+
+    @property
+    def indexed(self) -> bool:
+        return self._hnsw is not None
+
+    @property
     def payload_schemas(self) -> dict[str, PayloadSchema]:
         return self._payload_indexes.schemas
 

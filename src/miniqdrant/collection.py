@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import math
+import shutil
 from collections.abc import Callable, Iterable
+from concurrent.futures import Future
+from dataclasses import dataclass
 from pathlib import Path
-from threading import RLock
+from threading import RLock, Thread
 from uuid import uuid4
 
 from miniqdrant.config import CollectionConfig, config_fingerprint
@@ -20,6 +23,8 @@ from miniqdrant.models import (
     StoredPoint,
     validate_point,
 )
+from miniqdrant.optimizer.failures import OptimizationGate
+from miniqdrant.optimizer.optimizer import build_replacement
 from miniqdrant.persistence.manifest import Manifest, ManifestStore
 from miniqdrant.persistence.metadata import (
     CollectionMetadata,
@@ -35,7 +40,60 @@ from miniqdrant.persistence.wal import (
 )
 from miniqdrant.segment import ImmutableSegment, MutableSegment, SegmentSearchRequest
 from miniqdrant.segment.codec import SegmentCodec, SegmentImage
+from miniqdrant.segment.references import SegmentHandle
 from miniqdrant.topk import TopK
+
+
+@dataclass(frozen=True, slots=True)
+class SegmentStatistics:
+    segment_count: int
+    live_points: int
+    deleted_points: int
+
+
+class CollectionView:
+    """A stable search view whose segment files outlive the request."""
+
+    def __init__(
+        self,
+        config: CollectionConfig,
+        handles: tuple[SegmentHandle, ...],
+        mutable: ImmutableSegment | None,
+        latest: dict[PointId, StoredPoint],
+    ) -> None:
+        self._config = config
+        self._handles = handles
+        self._mutable = mutable
+        self._latest = latest
+        self._closed = False
+
+    @property
+    def segment_paths(self) -> tuple[Path, ...]:
+        return tuple(handle.path for handle in self._handles)
+
+    def search(self, request: SearchRequest) -> SearchResult:
+        if self._closed:
+            raise RuntimeError("collection view is closed")
+        return _search(
+            self._config,
+            tuple(handle.segment for handle in self._handles)
+            + (() if self._mutable is None else (self._mutable,)),
+            self._latest,
+            request,
+        )
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        for handle in self._handles:
+            handle.release()
+
+    def __enter__(self) -> CollectionView:
+        return self
+
+    def __exit__(self, *_error: object) -> None:
+        self.close()
 
 
 class Collection(Lifecycle):
@@ -48,7 +106,7 @@ class Collection(Lifecycle):
         wal: Wal,
         manifest_store: ManifestStore,
         manifest: Manifest,
-        segments: list[ImmutableSegment],
+        segments: list[SegmentHandle],
         payload_schemas: dict[str, PayloadSchema],
         failure_injector: Callable[[str], None] | None = None,
     ) -> None:
@@ -63,6 +121,7 @@ class Collection(Lifecycle):
         self._payload_schemas = payload_schemas
         self._failure_injector = failure_injector or (lambda _stage: None)
         self._update_lock = RLock()
+        self._optimizer_lock = RLock()
         self._mutable = self._new_mutable()
 
     @classmethod
@@ -114,12 +173,15 @@ class Collection(Lifecycle):
         manifest = store.load_current()
         if manifest.schema_fingerprint != config_fingerprint(metadata.config):
             raise CorruptionError("manifest schema fingerprint does not match collection")
-        segments: list[ImmutableSegment] = []
+        segments: list[SegmentHandle] = []
         for segment_id in manifest.segment_ids:
-            image = SegmentCodec.read(path / "segments" / segment_id)
+            segment_path = path / "segments" / segment_id
+            image = SegmentCodec.read(segment_path)
             if image.config != metadata.config:
                 raise CorruptionError(f"segment schema mismatch: {segment_id}")
-            segments.append(image.to_segment())
+            segments.append(
+                SegmentHandle(segment_id, segment_path, image.to_segment())
+            )
         wal = Wal.open(path / "wal", durability)
         collection = cls(
             metadata.name,
@@ -153,6 +215,11 @@ class Collection(Lifecycle):
         return {
             path: schema.value for path, schema in sorted(self._payload_schemas.items())
         }
+
+    @property
+    def segment_paths(self) -> tuple[Path, ...]:
+        with self._update_lock:
+            return tuple(handle.path for handle in self._segments)
 
     def count(self) -> int:
         self._ensure_open()
@@ -194,8 +261,8 @@ class Collection(Lifecycle):
             )
             self._payload_schemas = schemas
             self._mutable.create_payload_index(path, normalized)
-            for segment in self._segments:
-                segment.create_payload_index(path, normalized)
+            for handle in self._segments:
+                handle.segment.create_payload_index(path, normalized)
 
     def flush(self, *, indexed: bool = False) -> None:
         self._ensure_open()
@@ -210,7 +277,7 @@ class Collection(Lifecycle):
                 payload_schemas=self._payload_schemas,
                 indexed=indexed,
             )
-            SegmentCodec.write_atomic(self._path / "segments", image)
+            segment_path = SegmentCodec.write_atomic(self._path / "segments", image)
             manifest = Manifest(
                 generation=self._manifest.generation + 1,
                 schema_fingerprint=self._manifest.schema_fingerprint,
@@ -218,7 +285,9 @@ class Collection(Lifecycle):
                 replay_boundary=self._wal.last_sequence,
             )
             self._manifest_store.publish(manifest)
-            self._segments.append(image.to_segment())
+            self._segments.append(
+                SegmentHandle(segment_id, segment_path, image.to_segment())
+            )
             self._manifest = manifest
             self._mutable = self._new_mutable()
 
@@ -235,52 +304,74 @@ class Collection(Lifecycle):
 
     def search(self, request: SearchRequest) -> SearchResult:
         self._ensure_open()
-        if request.limit < 1:
-            raise ValueError("search limit must be positive")
-        if request.filter is not None and not isinstance(request.filter, Filter):
-            raise InvalidFilterError("search filter must be a Filter")
-        if request.score_threshold is not None and not math.isfinite(request.score_threshold):
-            raise ValueError("score threshold must be finite")
+        with self.capture_view() as view:
+            return view.search(request)
+
+    def capture_view(self) -> CollectionView:
+        self._ensure_open()
         with self._update_lock:
-            latest = self._latest_records()
-            search_segments = [*self._segments, self._mutable]
-            local_limit = request.limit + max(0, len(search_segments) - 1)
-            segment_results = tuple(
-                segment.search(
-                    SegmentSearchRequest(
-                        vector=tuple(request.vector),
-                        limit=local_limit,
-                        filter=request.filter,
-                        exact=request.exact,
-                        ef_search=request.ef_search,
-                    )
+            handles = tuple(handle.acquire() for handle in self._segments)
+            mutable_records = self._mutable.iter_records()
+            mutable = (
+                ImmutableSegment.build(
+                    self._config,
+                    mutable_records,
+                    payload_schemas=self._payload_schemas,
                 )
-                for segment in search_segments
+                if mutable_records
+                else None
             )
-            collector = TopK(request.limit)
-            for result in segment_results:
-                for candidate in result.candidates:
-                    visible = latest.get(candidate.point_id)
-                    if (
-                        visible is None
-                        or visible.deleted
-                        or visible.version != candidate.version
-                    ):
-                        continue
-                    if (
-                        request.score_threshold is not None
-                        and candidate.score < request.score_threshold
-                    ):
-                        continue
-                    collector.offer(candidate.point_id, candidate.score)
-            hits = tuple(
-                self._project_hit(latest[item.point_id], item.score, request)
-                for item in collector.results()
+            latest = _latest_records(
+                tuple(handle.segment for handle in handles),
+                mutable_records,
             )
-            return SearchResult(
-                hits,
-                plan=tuple(result.strategy for result in segment_results),
+            return CollectionView(self._config, handles, mutable, latest)
+
+    def segment_statistics(self) -> SegmentStatistics:
+        self._ensure_open()
+        with self._update_lock:
+            records = tuple(
+                record
+                for handle in self._segments
+                for record in handle.segment.iter_records()
             )
+            return SegmentStatistics(
+                segment_count=len(self._segments),
+                live_points=sum(not record.deleted for record in records),
+                deleted_points=sum(record.deleted for record in records),
+            )
+
+    def optimize(self, *, gate: OptimizationGate | None = None) -> None:
+        self._ensure_open()
+        with self._optimizer_lock:
+            self._optimize(gate)
+
+    def start_optimize(
+        self,
+        *,
+        gate: OptimizationGate | None = None,
+    ) -> Future[None]:
+        self._ensure_open()
+        result: Future[None] = Future()
+
+        def run() -> None:
+            if not result.set_running_or_notify_cancel():
+                return
+            try:
+                self.optimize(gate=gate)
+            except BaseException as error:
+                result.set_exception(error)
+            else:
+                result.set_result(None)
+
+        Thread(target=run, name=f"optimize-{self._name}", daemon=True).start()
+        return result
+
+    def merge(self) -> None:
+        self.optimize()
+
+    def vacuum(self) -> None:
+        self.optimize()
 
     def close(self) -> None:
         if not self._mark_closed():
@@ -310,17 +401,99 @@ class Collection(Lifecycle):
                 self._mutable.apply_delete(point_id, record.sequence)
 
     def _latest_records(self) -> dict[PointId, StoredPoint]:
-        latest: dict[PointId, StoredPoint] = {}
-        for segment in self._segments:
-            for record in segment.iter_records():
-                current = latest.get(record.id)
-                if current is None or record.version > current.version:
-                    latest[record.id] = record
-        for record in self._mutable.iter_records():
-            current = latest.get(record.id)
-            if current is None or record.version > current.version:
-                latest[record.id] = record
-        return latest
+        return _latest_records(
+            tuple(handle.segment for handle in self._segments),
+            self._mutable.iter_records(),
+        )
+
+    def _optimize(self, gate: OptimizationGate | None) -> None:
+        with self._update_lock:
+            sources = tuple(handle.acquire() for handle in self._segments)
+            captured_records = tuple(
+                record
+                for handle in sources
+                for record in handle.segment.iter_records()
+            ) + self._mutable.iter_records()
+            replay_boundary = self._wal.last_sequence
+
+        segment_id = f"seg-{uuid4().hex}"
+        segment_path = self._path / "segments" / segment_id
+        manifest: Manifest | None = None
+        published = False
+        try:
+            if gate is not None:
+                gate.arrive("sources_captured")
+                gate.wait_for_release("finish_build")
+            image = build_replacement(
+                segment_id=segment_id,
+                config=self._config,
+                records=captured_records,
+                payload_schemas=self._payload_schemas,
+                drop_tombstones=True,
+            )
+            SegmentCodec.write_atomic(self._path / "segments", image)
+            with self._update_lock:
+                source_ids = {handle.segment_id for handle in sources}
+                preserved = [
+                    handle
+                    for handle in self._segments
+                    if handle.segment_id not in source_ids
+                ]
+                manifest = Manifest(
+                    generation=self._manifest.generation + 1,
+                    schema_fingerprint=self._manifest.schema_fingerprint,
+                    segment_ids=(
+                        *(handle.segment_id for handle in preserved),
+                        segment_id,
+                    ),
+                    replay_boundary=replay_boundary,
+                )
+                late_records = tuple(
+                    record
+                    for record in self._mutable.iter_records()
+                    if record.version > replay_boundary
+                )
+                replacement = SegmentHandle(
+                    segment_id,
+                    segment_path,
+                    image.to_segment(),
+                )
+                next_mutable = self._mutable_from_records(late_records)
+                self._manifest_store.publish(manifest)
+                published = True
+                self._segments = [
+                    *preserved,
+                    replacement,
+                ]
+                self._manifest = manifest
+                self._mutable = next_mutable
+                for handle in sources:
+                    handle.retire()
+        except BaseException:
+            if manifest is not None and not published:
+                (self._path / manifest.filename).unlink(missing_ok=True)
+                (self._path / "CURRENT.tmp").unlink(missing_ok=True)
+            if segment_path.exists() and not published:
+                shutil.rmtree(segment_path)
+            raise
+        finally:
+            for handle in sources:
+                handle.release()
+
+    def _mutable_from_records(
+        self,
+        records: Iterable[StoredPoint],
+    ) -> MutableSegment:
+        mutable = self._new_mutable()
+        for record in records:
+            if record.deleted:
+                mutable.apply_delete(record.id, record.version)
+            else:
+                mutable.apply_upsert(
+                    Point(record.id, record.vector, record.payload),
+                    record.version,
+                )
+        return mutable
 
     @staticmethod
     def _project_hit(
@@ -334,3 +507,71 @@ class Collection(Lifecycle):
             payload=point.payload if request.with_payload else None,
             vector=point.vector if request.with_vector else None,
         )
+
+
+def _latest_records(
+    segments: Iterable[ImmutableSegment],
+    extra_records: Iterable[StoredPoint],
+) -> dict[PointId, StoredPoint]:
+    latest: dict[PointId, StoredPoint] = {}
+    for segment in segments:
+        for record in segment.iter_records():
+            current = latest.get(record.id)
+            if current is None or record.version > current.version:
+                latest[record.id] = record
+    for record in extra_records:
+        current = latest.get(record.id)
+        if current is None or record.version > current.version:
+            latest[record.id] = record
+    return latest
+
+
+def _search(
+    config: CollectionConfig,
+    segments: tuple[ImmutableSegment, ...],
+    latest: dict[PointId, StoredPoint],
+    request: SearchRequest,
+) -> SearchResult:
+    if request.limit < 1:
+        raise ValueError("search limit must be positive")
+    if request.filter is not None and not isinstance(request.filter, Filter):
+        raise InvalidFilterError("search filter must be a Filter")
+    if request.score_threshold is not None and not math.isfinite(request.score_threshold):
+        raise ValueError("score threshold must be finite")
+    local_limit = request.limit + max(0, len(segments) - 1)
+    segment_results = tuple(
+        segment.search(
+            SegmentSearchRequest(
+                vector=tuple(request.vector),
+                limit=local_limit,
+                filter=request.filter,
+                exact=request.exact,
+                ef_search=request.ef_search,
+            )
+        )
+        for segment in segments
+    )
+    collector = TopK(request.limit)
+    for result in segment_results:
+        for candidate in result.candidates:
+            visible = latest.get(candidate.point_id)
+            if (
+                visible is None
+                or visible.deleted
+                or visible.version != candidate.version
+            ):
+                continue
+            if (
+                request.score_threshold is not None
+                and candidate.score < request.score_threshold
+            ):
+                continue
+            collector.offer(candidate.point_id, candidate.score)
+    hits = tuple(
+        Collection._project_hit(latest[item.point_id], item.score, request)
+        for item in collector.results()
+    )
+    return SearchResult(
+        hits,
+        plan=tuple(result.strategy for result in segment_results),
+    )
