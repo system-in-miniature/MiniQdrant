@@ -36,7 +36,18 @@ code = round((number - minimum) / scale) + _MIN_CODE
 minimum + (code - _MIN_CODE) * scale
 ```
 
-向最近网格点取整，使单分量最大误差约为半个 scale。`ScalarQuantizer.max_error_bound` 返回各维 `scale / 2` 的最大值；它不是 dot product 误差界，也不是最终排名误差界。
+向最近网格点取整，使单分量最大误差约为半个 scale。`ScalarQuantizer.max_error_bound`
+返回各维 `scale / 2` 的最大值，但这个界 **只对落在该维训练拟合
+`[minimum, maximum]` 范围内的分量成立**；它不是 dot product 误差界，也不是最终排名误差界。
+
+!!! warning "Clamp 会使拟合范围误差界失效"
+
+    越界输入会被 clamp 到最近端点 code，因此其重建误差不受
+    `max_error_bound` 约束。审计反例是：用一维向量 `[0]`、`[1]`
+    训练，再编码输入 `10`，解码结果为 `1`。实际分量误差
+    `abs(10 - 1) = 9.0`，而报告的拟合范围内误差界仅为
+    `1 / 510 ≈ 0.00196078`。因此只能把 `max_error_bound` 当作范围内
+    重建误差界，绝不能当作任意未来输入的保证。
 
 常量维必须显式处理。编码总是输出 code 0，解码返回 minimum（也等于 maximum）。没有这个分支，拟合会除以零。注意，code 0 并不是一般量化区间的中点；它只是该维没有方差时的确定性哨兵。
 

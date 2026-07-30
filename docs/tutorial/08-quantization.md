@@ -50,8 +50,19 @@ minimum + (code - _MIN_CODE) * scale
 
 Rounding to the nearest grid point gives a maximum component error of roughly
 half a scale. `ScalarQuantizer.max_error_bound` returns the largest
-per-dimension `scale / 2`; it is not a bound on dot-product error or final
-ranking error.
+per-dimension `scale / 2`, but **only for components inside the
+`[minimum, maximum]` range used to fit that dimension**. It is not a bound on
+dot-product error or final ranking error.
+
+!!! warning "Clamping voids the fitted-range error bound"
+
+    An out-of-range input is clamped to the nearest endpoint code, so its
+    reconstruction error is not constrained by `max_error_bound`. For the
+    audit counterexample, fitting one-dimensional vectors `[0]` and `[1]`,
+    then encoding input `10`, decodes to `1`. The actual component error is
+    `abs(10 - 1) = 9.0`, while the reported fitted-range bound is only
+    `1 / 510 ≈ 0.00196078`. Treat `max_error_bound` as an in-range
+    reconstruction bound, never as a guarantee for arbitrary future inputs.
 
 Constant dimensions deserve explicit treatment. Encoding always emits code
 zero, and decoding returns the minimum (which equals the maximum). Without
