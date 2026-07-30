@@ -1,5 +1,7 @@
 # Behavior and evidence matrix
 
+> **Language**: English | [简体中文](zh/behavior-matrix.md)
+
 Every retained project claim below names its implementation boundary, direct
 evidence, failure/quality experiment where applicable, and deliberate
 difference from Qdrant.
