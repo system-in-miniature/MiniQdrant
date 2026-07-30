@@ -1,3 +1,5 @@
+> **Language**: English | [简体中文](README.zh-CN.md)
+
 # MiniQdrant
 
 MiniQdrant is a direct-first Python reference implementation of filtered vector
@@ -21,7 +23,8 @@ query → filter planner → immutable segments → version resolution → globa
   cardinality-aware per-segment planning;
 - versioned full-payload replacement, shallow field merge, and field deletion;
 - deterministic exact Top-K and HNSW candidate search;
-- scalar int8 candidate scoring with oversampling and exact float rescoring;
+- scalar-int8 storage with decoded-float candidate scoring, oversampling, and
+  exact float rescoring;
 - WAL-before-apply upsert/delete operations, monotonic versions, tombstones,
   manifest-rooted restart recovery, and active-tail repair;
 - online merge/vacuum/index rebuild, atomic manifest publication, stable read
@@ -81,6 +84,8 @@ Each JSONL point has `id`, `vector`, and an optional `payload`.
 - [ARCHITECTURE.md](ARCHITECTURE.md): ownership, query, mutation, optimization,
   and recovery flows.
 - [docs/behavior-matrix.md](docs/behavior-matrix.md): behavior-to-test evidence.
+- [docs/qdrant-mapping.md](docs/qdrant-mapping.md): MiniQdrant modules mapped
+  to their closest Qdrant subsystems and semantic relationship.
 - [docs/storage-format.md](docs/storage-format.md): WAL, segment, manifest, and
   snapshot formats.
 - [DIFFERENCES_FROM_QDRANT.md](DIFFERENCES_FROM_QDRANT.md): exact scope boundary.

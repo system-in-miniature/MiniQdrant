@@ -1,3 +1,10 @@
+"""Checksummed WAL framing with narrowly scoped torn-tail recovery.
+
+Only an incomplete or checksum-bad final frame is repairable: it can be the
+residue of a crash during append.  Earlier corruption is rejected because
+truncating it would silently discard a later, apparently durable history.
+"""
+
 from __future__ import annotations
 
 import os
@@ -24,6 +31,8 @@ class DecodedFrame:
 
 
 def encode_frame(sequence: int, kind: int, payload: bytes) -> bytes:
+    # The checksum covers sequence and operation kind as well as the payload,
+    # so a torn or corrupted header/body cannot be replayed under new metadata.
     body = _BODY_PREFIX.pack(sequence, kind) + payload
     checksum = zlib.crc32(body)
     return _HEADER.pack(MAGIC, FORMAT_VERSION, len(body)) + body + _CRC.pack(checksum)
@@ -49,6 +58,8 @@ def scan_frames(path: Path, *, repair_tail: bool) -> tuple[DecodedFrame, ...]:
         expected_crc = _CRC.unpack_from(data, offset + body_length)[0]
         actual_crc = zlib.crc32(body)
         if expected_crc != actual_crc:
+            # A bad checksum is crash-repairable only when this frame reaches
+            # EOF.  A bad interior frame indicates durable-history corruption.
             if repair_tail and frame_end == len(data):
                 _truncate(path, last_valid)
                 return tuple(frames)
@@ -81,5 +92,6 @@ def _truncate(path: Path, size: int) -> None:
     with path.open("r+b") as stream:
         stream.truncate(size)
         stream.flush()
+        # Persist the repaired length before replay continues; otherwise a
+        # second crash could expose the torn bytes again.
         os.fsync(stream.fileno())
-

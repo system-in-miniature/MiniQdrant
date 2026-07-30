@@ -1,3 +1,10 @@
+"""Single-file write-ahead log and replay contract for collection mutations.
+
+Frames are appended before mutations reach the mutable segment.  The manifest
+replay boundary makes recovery idempotent, but this teaching WAL does not yet
+rotate or reclaim frames covered by published segments.
+"""
+
 from __future__ import annotations
 
 import json
@@ -207,4 +214,3 @@ def _validate_sequences(frames: tuple[DecodedFrame, ...]) -> None:
                 f"WAL sequence mismatch: expected {expected}, got {frame.sequence}"
             )
         expected += 1
-

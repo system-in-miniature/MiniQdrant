@@ -1,3 +1,10 @@
+"""Deterministic, inspectable HNSW construction and candidate search.
+
+The implementation keeps the recognizable HNSW layer/entry-point algorithm,
+but favors reproducibility over production recall and latency behavior.  In
+particular, disconnected components are searched by non-standard restarts.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -47,6 +54,9 @@ class HnswIndex:
         }
         self._entry_point: PointId | None = None
         self._max_level = -1
+        # HNSW is a hierarchy of increasingly sparse proximity graphs.  Most
+        # points live only at layer 0; the deterministic geometric-like level
+        # assignment promotes a shrinking subset to act as long-range routes.
         for point in ordered:
             self._insert(point.id)
 
@@ -99,11 +109,18 @@ class HnswIndex:
         breadth = max(limit, ef_search or self._config.ef_search)
         entry = self._entry_point
         visited: set[PointId] = {entry}
+        # Descend through sparse upper layers greedily.  The closest point found
+        # at one layer becomes the entry point for the denser layer below.
         for layer in range(self._max_level, 0, -1):
             entry, layer_visited = self._greedy(normalized, entry, layer)
             visited.update(layer_visited)
         scores, layer_visited = self._search_layer(normalized, (entry,), breadth, 0)
         visited.update(layer_visited)
+        # This restart loop is deliberately *not* standard HNSW.  It visits the
+        # smallest-id unvisited component until `breadth` candidates exist,
+        # making disconnected graphs easier to inspect and recall tests less
+        # brittle.  When components are small (or ef is large), it can restart
+        # repeatedly and turn an approximate graph search into a full scan.
         while len(scores) < breadth and len(visited) < len(self._vectors):
             next_entry = min(
                 self._vectors.keys() - visited,
@@ -142,6 +159,8 @@ class HnswIndex:
 
         entry = self._entry_point
         vector = self._vectors[point_id]
+        # New points first use upper layers only for navigation; connections
+        # are created once the descent reaches a layer occupied by the point.
         for layer in range(self._max_level, level, -1):
             entry, _ = self._greedy(vector, entry, layer)
         for layer in range(min(level, self._max_level), -1, -1):
@@ -218,6 +237,9 @@ class HnswIndex:
             negative_score, _, current = heapq.heappop(frontier)
             current_score = -negative_score
             best = _best_ids(best, scores, breadth)
+            # `best` is the ef-sized convergence window.  Because the frontier
+            # is ordered best-first, once its next candidate is worse than the
+            # window's worst member, no queued expansion can improve the set.
             if len(best) >= breadth and current_score < scores[best[-1]]:
                 break
             for neighbor in self._layers.get(layer, {}).get(current, ()):
@@ -238,6 +260,10 @@ class HnswIndex:
         neighbors = self._layers[layer][point_id]
         if len(neighbors) <= self._config.m:
             return
+        # Keep the m closest neighbors (with stable ID tie-breaking) and remove
+        # reverse edges too.  Production HNSW commonly uses a diversity-aware
+        # heuristic; this nearest-only rule is smaller and deterministic but
+        # can create less navigable clusters and disconnected components.
         retained = set(
             sorted(
                 neighbors,

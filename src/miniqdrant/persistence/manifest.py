@@ -1,3 +1,10 @@
+"""Checksummed manifests and atomic CURRENT-pointer publication.
+
+A new immutable state becomes restart-visible only after its manifest is
+durable and `CURRENT` is atomically replaced.  Thus a crash selects either the
+old complete generation or the new complete generation, never a mixed list.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -55,6 +62,8 @@ class ManifestStore:
         target = self._path / manifest.filename
         payload = _encode_manifest(manifest)
         temporary = target.with_suffix(".json.tmp")
+        # Publish the immutable, checksummed generation before changing the
+        # root pointer.  Directory fsync makes the rename durable.
         _write_fsynced(temporary, payload)
         os.replace(temporary, target)
         fsync_directory(self._path)
@@ -62,6 +71,8 @@ class ManifestStore:
         current_temporary = self._path / "CURRENT.tmp"
         _write_fsynced(current_temporary, f"{manifest.filename}\n".encode())
         self._failure_injector("before_current_replace")
+        # CURRENT is the single commit point.  Readers after restart observe
+        # either its previous filename or this fully written generation.
         os.replace(current_temporary, self._path / "CURRENT")
         fsync_directory(self._path)
 

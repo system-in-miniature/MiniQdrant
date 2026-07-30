@@ -1,3 +1,5 @@
+> **Language**: English | [简体中文](docs/zh/ARCHITECTURE.md)
+
 # Architecture
 
 ## Runtime ownership
@@ -56,10 +58,12 @@ capture source handles + WAL version V
 → delete source paths after the last old view closes
 ```
 
-The deterministic optimizer policy prioritizes excessive tombstones, then
-selects the two smallest segments when above the target count, then selects
-large unindexed segments. Explicit `merge()`, `vacuum()`, and `optimize()` force
-a complete safe rewrite in this reference implementation.
+`optimizer/policy.py` contains a deterministic teaching policy: it prioritizes
+excessive tombstones, then the two smallest segments above the target count,
+then large unindexed segments. That policy is exercised directly by tests but
+is not wired into `Collection`: `flush_threshold_points` does not trigger an
+automatic flush, and explicit `merge()`, `vacuum()`, and `optimize()` always
+force a complete safe rewrite.
 
 ## Persistence and recovery
 
