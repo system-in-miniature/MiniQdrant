@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from threading import Event
+
 from miniqdrant import Database, Distance, Point, SearchRequest
 from miniqdrant.optimizer.failures import OptimizationGate
 
@@ -25,6 +28,39 @@ def test_write_during_build_wins_after_publish(tmp_path) -> None:
     assert collection.search(SearchRequest((1.0, 0.0), 10, exact=True)).hits[0].score == 0.0
 
 
+def test_flush_during_build_waits_and_does_not_duplicate_hits(tmp_path) -> None:
+    collection = Database.open(tmp_path).create_collection(
+        "items",
+        dimension=2,
+        distance=Distance.DOT,
+    )
+    collection.upsert([Point(1, (1.0, 0.0), {})])
+    gate = OptimizationGate()
+    optimizer = collection.start_optimize(gate=gate)
+    gate.wait_until("sources_captured")
+    flush_started = Event()
+
+    def flush() -> None:
+        flush_started.set()
+        collection.flush()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        pending_flush = executor.submit(flush)
+        assert flush_started.wait(timeout=5)
+        try:
+            pending_flush.result(timeout=0.05)
+            flush_waited_for_optimizer = False
+        except TimeoutError:
+            flush_waited_for_optimizer = True
+        gate.release("finish_build")
+        optimizer.result(timeout=5)
+        pending_flush.result(timeout=5)
+
+    hits = collection.search(SearchRequest((1.0, 0.0), 10, exact=True)).hits
+    assert flush_waited_for_optimizer
+    assert [hit.id for hit in hits] == [1]
+
+
 def test_existing_view_can_finish_after_merge(tmp_path) -> None:
     collection = Database.open(tmp_path).create_collection(
         "items",
@@ -42,4 +78,3 @@ def test_existing_view_can_finish_after_merge(tmp_path) -> None:
     assert all(path.exists() for path in old_paths)
     old_view.close()
     assert all(not path.exists() for path in old_paths)
-

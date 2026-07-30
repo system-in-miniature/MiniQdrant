@@ -1,3 +1,10 @@
+"""Collection orchestration for versioned writes, stable reads, and publication.
+
+This module owns the WAL-before-apply boundary, cross-segment visibility, and
+the short-lock/long-build optimizer protocol.  Storage and index modules do not
+publish collection state independently.
+"""
+
 from __future__ import annotations
 
 import math
@@ -314,7 +321,7 @@ class Collection(Lifecycle):
 
     def flush(self, *, indexed: bool = False) -> None:
         self._ensure_open()
-        with self._update_lock:
+        with self._optimizer_lock, self._update_lock:
             if self._mutable.total_count == 0:
                 return
             segment_id = f"seg-{uuid4().hex}"
@@ -564,6 +571,11 @@ class Collection(Lifecycle):
                     ),
                     replay_boundary=replay_boundary,
                 )
+                # Writes may arrive while the replacement is built without the
+                # update lock.  Records at or before the captured WAL boundary
+                # are already represented by `image`; strictly newer records
+                # must survive in the next mutable segment or publication would
+                # make acknowledged concurrent writes disappear.
                 late_records = tuple(
                     record
                     for record in self._mutable.iter_records()
@@ -671,6 +683,7 @@ def _search(
         if segment.live_count
     )
     collector = TopK(request.limit)
+    offered_point_ids: set[PointId] = set()
     for result in segment_results:
         for candidate in result.candidates:
             visible = latest.get(candidate.point_id)
@@ -685,6 +698,9 @@ def _search(
                 and candidate.score < request.score_threshold
             ):
                 continue
+            if candidate.point_id in offered_point_ids:
+                continue
+            offered_point_ids.add(candidate.point_id)
             collector.offer(candidate.point_id, candidate.score)
     hits = tuple(
         Collection._project_hit(latest[item.point_id], item.score, request)
@@ -700,6 +716,10 @@ def _stale_live_count(
     segment: ImmutableSegment,
     latest: dict[PointId, StoredPoint],
 ) -> int:
+    # A segment-local Top-K can be filled with old versions that collection-level
+    # visibility later rejects.  Ask the segment for one extra candidate per
+    # stale live record so enough visible candidates remain for the global
+    # Top-K.  This correctness buffer requires a full segment scan per search.
     return sum(
         visible is None
         or visible.deleted

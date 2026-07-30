@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from miniqdrant import Database, Distance, Point, SearchRequest
+from dataclasses import replace
+
+from miniqdrant import CollectionConfig, Database, Distance, Point, SearchRequest
+from miniqdrant.collection import _search
+from miniqdrant.models import validate_point
+from miniqdrant.segment import ImmutableSegment
 
 
 def test_latest_version_wins_even_when_old_scores_higher(tmp_path) -> None:
@@ -52,6 +57,24 @@ def test_cross_segment_topk_is_globally_ordered(tmp_path) -> None:
 
     assert [hit.id for hit in result.hits] == [2, 3]
     assert collection.count() == 3
+
+
+def test_global_merge_deduplicates_same_version_point_copies() -> None:
+    config = CollectionConfig(dimension=2, distance=Distance.DOT)
+    point = replace(
+        validate_point(Point(1, (1.0, 0.0), {}), config),
+        version=1,
+    )
+    segment = ImmutableSegment.build(config, [point])
+
+    result = _search(
+        config,
+        (segment, segment),
+        {point.id: point},
+        SearchRequest((1.0, 0.0), limit=10, exact=True),
+    )
+
+    assert [hit.id for hit in result.hits] == [1]
 
 
 def test_many_stale_high_scores_cannot_hide_a_visible_lower_candidate(tmp_path) -> None:
