@@ -1,8 +1,6 @@
-# MiniQdrant Reference Project Implementation Plan
+# MiniQdrant Reference Project Design and Implementation History
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. This repository is explicitly configured for inline execution; do not dispatch subagents.
-
-**Goal:** Build and verify a direct-first single-node vector database that joins exact/HNSW retrieval, payload filtering and planning, durable versioned segments, online optimization, quantization, snapshots, and crash recovery.
+**Historical objective:** Build and verify a direct-first single-node vector database that joins exact/HNSW retrieval, payload filtering and planning, durable versioned segments, online optimization, quantization, snapshots, and crash recovery.
 
 **Architecture:** One `Collection` serializes updates and publishes immutable `CollectionView` values for lock-free distance work. Mutations are validated before versioned WAL append and apply to an appendable segment; exact and optimized immutable segments share one search contract, while a per-segment planner selects exact, indexed-filter, HNSW, or quantized-rescore execution. Immutable manifests form restart roots and optimizers publish replacement segments atomically without overwriting later versions.
 
@@ -85,20 +83,20 @@ MiniQdrant/
 Each module has one semantic owner. `collection.py` coordinates components but
 does not implement distance, filtering, graph traversal, or file codecs.
 
-## Task 1: Project scaffold and immutable domain values
+## Milestone 1: Project scaffold and immutable domain values
 
-**Files:**
-- Create: `pyproject.toml`
-- Create: `src/miniqdrant/__init__.py`
-- Create: `src/miniqdrant/config.py`
-- Create: `src/miniqdrant/errors.py`
-- Create: `src/miniqdrant/ids.py`
-- Create: `src/miniqdrant/json_values.py`
-- Create: `src/miniqdrant/models.py`
-- Create: `tests/unit/test_domain.py`
-- Create: `tests/test_project_contract.py`
+**Recorded file scope:**
+- Added: `pyproject.toml`
+- Added: `src/miniqdrant/__init__.py`
+- Added: `src/miniqdrant/config.py`
+- Added: `src/miniqdrant/errors.py`
+- Added: `src/miniqdrant/ids.py`
+- Added: `src/miniqdrant/json_values.py`
+- Added: `src/miniqdrant/models.py`
+- Added: `tests/unit/test_domain.py`
+- Added: `tests/test_project_contract.py`
 
-- [ ] **Step 1: Write failing project and domain tests**
+**Recorded activity 1 — Test intent: failing project and domain tests**
 
 ```python
 def test_cosine_point_is_normalized_once():
@@ -114,12 +112,12 @@ def test_non_finite_vector_and_payload_are_rejected():
         validate_point(Point(1, (1.0,), {"bad": float("inf")}), config)
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+**Recorded activity 2 — Verification intent: tests and verify RED**
 
-Run: `uv run pytest tests/unit/test_domain.py tests/test_project_contract.py -q`  
-Expected: collection fails because package modules do not exist.
+Historical verification covered targeted or full test coverage, including `tests/unit/test_domain.py`, `tests/test_project_contract.py`.
+Historical expected evidence: collection fails because package modules do not exist.
 
-- [ ] **Step 3: Implement the scaffold and validation boundary**
+**Recorded activity 3 — Design outcome: the scaffold and validation boundary**
 
 Define frozen `CollectionConfig`, `HnswConfig`, `OptimizerConfig`,
 `ScalarQuantizationConfig`, `Point`, `StoredPoint`, `SearchRequest`,
@@ -138,27 +136,20 @@ def validate_point(point: Point, config: CollectionConfig) -> StoredPoint:
 Use Python 3.12, hatchling, src layout, ruff, pytest, and a standard-library
 runtime. Export the stable public types from `miniqdrant.__init__`.
 
-- [ ] **Step 4: Run focused verification**
+**Recorded activity 4 — Verification intent: focused verification**
 
-Run: `uv run ruff check src tests && uv run pytest tests/unit/test_domain.py tests/test_project_contract.py -q`  
-Expected: PASS.
+Historical verification covered targeted or full test coverage, static analysis, including `tests/unit/test_domain.py`, `tests/test_project_contract.py`.
+Historical expected evidence: PASS.
 
-- [ ] **Step 5: Commit**
+## Milestone 2: Distance metrics and deterministic bounded Top-K
 
-```bash
-git add pyproject.toml src tests
-git commit -m "feat: establish MiniQdrant domain contracts"
-```
+**Recorded file scope:**
+- Added: `src/miniqdrant/metrics.py`
+- Added: `src/miniqdrant/topk.py`
+- Added: `tests/unit/test_metrics.py`
+- Added: `tests/unit/test_topk.py`
 
-## Task 2: Distance metrics and deterministic bounded Top-K
-
-**Files:**
-- Create: `src/miniqdrant/metrics.py`
-- Create: `src/miniqdrant/topk.py`
-- Create: `tests/unit/test_metrics.py`
-- Create: `tests/unit/test_topk.py`
-
-- [ ] **Step 1: Write failing metric and tie-breaking tests**
+**Recorded activity 1 — Test intent: failing metric and tie-breaking tests**
 
 ```python
 @pytest.mark.parametrize(
@@ -180,12 +171,12 @@ def test_topk_breaks_equal_scores_by_canonical_id():
     assert [candidate.point_id for candidate in collector.results()] == [1, 2]
 ```
 
-- [ ] **Step 2: Verify RED**
+- **Step 2: Verify RED**
 
-Run: `uv run pytest tests/unit/test_metrics.py tests/unit/test_topk.py -q`  
-Expected: imports fail.
+Historical verification covered targeted or full test coverage, including `tests/unit/test_metrics.py`, `tests/unit/test_topk.py`.
+Historical expected evidence: imports fail.
 
-- [ ] **Step 3: Implement metrics and heap**
+**Recorded activity 3 — Design outcome: metrics and heap**
 
 ```python
 def score(distance: Distance, left: Vector, right: Vector) -> float:
@@ -197,25 +188,20 @@ def score(distance: Distance, left: Vector, right: Vector) -> float:
 `TopK` retains at most K candidates and returns `(-score, point_id_sort_key)`
 ordering without using point IDs as vector-internal offsets.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- **Step 4: Verify GREEN and commit**
 
-Run: `uv run pytest tests/unit/test_metrics.py tests/unit/test_topk.py -q`  
-Expected: PASS.
+Historical verification covered targeted or full test coverage, including `tests/unit/test_metrics.py`, `tests/unit/test_topk.py`.
+Historical expected evidence: PASS.
 
-```bash
-git add src/miniqdrant/metrics.py src/miniqdrant/topk.py tests/unit
-git commit -m "feat: add deterministic vector scoring"
-```
+## Milestone 3: Payload filter AST and exact evaluation
 
-## Task 3: Payload filter AST and exact evaluation
+**Recorded file scope:**
+- Added: `src/miniqdrant/filters/__init__.py`
+- Added: `src/miniqdrant/filters/ast.py`
+- Added: `src/miniqdrant/filters/evaluate.py`
+- Added: `tests/contract/test_filters.py`
 
-**Files:**
-- Create: `src/miniqdrant/filters/__init__.py`
-- Create: `src/miniqdrant/filters/ast.py`
-- Create: `src/miniqdrant/filters/evaluate.py`
-- Create: `tests/contract/test_filters.py`
-
-- [ ] **Step 1: Write failing nested-filter tests**
+**Recorded activity 1 — Test intent: failing nested-filter tests**
 
 ```python
 def test_boolean_filter_and_array_any_semantics():
@@ -231,12 +217,12 @@ def test_missing_path_does_not_match_range():
     assert not matches_filter(1, {}, Filter(must=(Range("price", gte=1),)))
 ```
 
-- [ ] **Step 2: Verify RED**
+- **Step 2: Verify RED**
 
-Run: `uv run pytest tests/contract/test_filters.py -q`  
-Expected: imports fail.
+Historical verification covered targeted or full test coverage, including `tests/contract/test_filters.py`.
+Historical expected evidence: imports fail.
 
-- [ ] **Step 3: Implement a closed validated AST**
+**Recorded activity 3 — Design outcome: a closed validated AST**
 
 Implement frozen `Match`, `Range`, `HasId`, and recursive `Filter`. Resolve dot
 paths through objects and flatten one array level into candidate scalar values.
@@ -255,28 +241,23 @@ def matches_filter(point_id, payload, filter_):
     )
 ```
 
-- [ ] **Step 4: Verify GREEN and commit**
+- **Step 4: Verify GREEN and commit**
 
-Run: `uv run pytest tests/contract/test_filters.py -q`  
-Expected: PASS.
+Historical verification covered targeted or full test coverage, including `tests/contract/test_filters.py`.
+Historical expected evidence: PASS.
 
-```bash
-git add src/miniqdrant/filters tests/contract/test_filters.py
-git commit -m "feat: evaluate structured payload filters"
-```
+## Milestone 4: Mutable segment and exact search oracle
 
-## Task 4: Mutable segment and exact search oracle
+**Recorded file scope:**
+- Added: `src/miniqdrant/segment/__init__.py`
+- Added: `src/miniqdrant/segment/base.py`
+- Added: `src/miniqdrant/segment/mutable.py`
+- Added: `src/miniqdrant/index/__init__.py`
+- Added: `src/miniqdrant/index/plain.py`
+- Added: `tests/index/test_plain.py`
+- Added: `tests/contract/test_mutable_segment.py`
 
-**Files:**
-- Create: `src/miniqdrant/segment/__init__.py`
-- Create: `src/miniqdrant/segment/base.py`
-- Create: `src/miniqdrant/segment/mutable.py`
-- Create: `src/miniqdrant/index/__init__.py`
-- Create: `src/miniqdrant/index/plain.py`
-- Create: `tests/index/test_plain.py`
-- Create: `tests/contract/test_mutable_segment.py`
-
-- [ ] **Step 1: Write failing exact-search and version tests**
+**Recorded activity 1 — Test intent: failing exact-search and version tests**
 
 ```python
 def test_exact_search_obeys_filter_and_topk(config):
@@ -294,38 +275,33 @@ def test_stale_version_cannot_resurrect_deleted_point(config):
     assert segment.get(1) is None
 ```
 
-- [ ] **Step 2: Verify RED**
+- **Step 2: Verify RED**
 
-Run: `uv run pytest tests/index/test_plain.py tests/contract/test_mutable_segment.py -q`  
-Expected: imports fail.
+Historical verification covered targeted or full test coverage, including `tests/index/test_plain.py`, `tests/contract/test_mutable_segment.py`.
+Historical expected evidence: imports fail.
 
-- [ ] **Step 3: Implement segment contracts and plain index**
+**Recorded activity 3 — Design outcome: segment contracts and plain index**
 
 Define `PointRecord`, `ScoredCandidate`, `SegmentSearchRequest`,
 `SegmentSnapshot`, and the `Segment` protocol. `MutableSegment` stores one
 highest-version record per external ID. `PlainVectorIndex.search` scans the
 provided live IDs, applies the residual filter, and uses `TopK`.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- **Step 4: Verify GREEN and commit**
 
-Run: `uv run pytest tests/index/test_plain.py tests/contract/test_mutable_segment.py -q`  
-Expected: PASS.
+Historical verification covered targeted or full test coverage, including `tests/index/test_plain.py`, `tests/contract/test_mutable_segment.py`.
+Historical expected evidence: PASS.
 
-```bash
-git add src/miniqdrant/index src/miniqdrant/segment tests/index tests/contract
-git commit -m "feat: add exact mutable vector segment"
-```
+## Milestone 5: Direct collection API and batch atomicity
 
-## Task 5: Direct collection API and batch atomicity
+**Recorded file scope:**
+- Added: `src/miniqdrant/collection.py`
+- Added: `src/miniqdrant/database.py`
+- Added: `src/miniqdrant/lifecycle.py`
+- Added: `tests/contract/test_collection.py`
+- Added: `tests/acceptance/test_exact_collection.py`
 
-**Files:**
-- Create: `src/miniqdrant/collection.py`
-- Create: `src/miniqdrant/database.py`
-- Create: `src/miniqdrant/lifecycle.py`
-- Create: `tests/contract/test_collection.py`
-- Create: `tests/acceptance/test_exact_collection.py`
-
-- [ ] **Step 1: Write failing direct API tests**
+**Recorded activity 1 — Test intent: failing direct API tests**
 
 ```python
 def test_invalid_batch_does_not_partially_apply(tmp_path):
@@ -343,41 +319,36 @@ def test_upsert_delete_retrieve_and_search(tmp_path):
     assert collection.retrieve([1]) == ()
 ```
 
-- [ ] **Step 2: Verify RED**
+- **Step 2: Verify RED**
 
-Run: `uv run pytest tests/contract/test_collection.py tests/acceptance/test_exact_collection.py -q`  
-Expected: imports or API calls fail.
+Historical verification covered targeted or full test coverage, including `tests/contract/test_collection.py`, `tests/acceptance/test_exact_collection.py`.
+Historical expected evidence: imports or API calls fail.
 
-- [ ] **Step 3: Implement synchronous visible-after-return API**
+**Recorded activity 3 — Design outcome: synchronous visible-after-return API**
 
 `Collection` validates complete batches, assigns increasing in-memory versions,
 applies them under one update lock, captures an immutable read view, and merges
 segment candidates. `Database` validates collection names and manages
 create/open/drop/close without a network adapter.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- **Step 4: Verify GREEN and commit**
 
-Run: `uv run pytest tests/contract/test_collection.py tests/acceptance/test_exact_collection.py -q`  
-Expected: PASS.
+Historical verification covered targeted or full test coverage, including `tests/contract/test_collection.py`, `tests/acceptance/test_exact_collection.py`.
+Historical expected evidence: PASS.
 
-```bash
-git add src/miniqdrant/collection.py src/miniqdrant/database.py src/miniqdrant/lifecycle.py tests
-git commit -m "feat: expose direct collection operations"
-```
+## Milestone 6: Payload indexes, cardinality, and query plans
 
-## Task 6: Payload indexes, cardinality, and query plans
+**Recorded file scope:**
+- Added: `src/miniqdrant/filters/cardinality.py`
+- Added: `src/miniqdrant/filters/index.py`
+- Added: `src/miniqdrant/query/__init__.py`
+- Added: `src/miniqdrant/query/planner.py`
+- Added: `src/miniqdrant/query/executor.py`
+- Added: `tests/query/test_payload_index.py`
+- Added: `tests/query/test_planner.py`
+- Added: `tests/query/test_plan_parity.py`
 
-**Files:**
-- Create: `src/miniqdrant/filters/cardinality.py`
-- Create: `src/miniqdrant/filters/index.py`
-- Create: `src/miniqdrant/query/__init__.py`
-- Create: `src/miniqdrant/query/planner.py`
-- Create: `src/miniqdrant/query/executor.py`
-- Create: `tests/query/test_payload_index.py`
-- Create: `tests/query/test_planner.py`
-- Create: `tests/query/test_plan_parity.py`
-
-- [ ] **Step 1: Write failing index and strategy tests**
+**Recorded activity 1 — Test intent: failing index and strategy tests**
 
 ```python
 def test_payload_index_candidates_equal_scan(segment):
@@ -400,37 +371,32 @@ def test_planner_boundaries(count, filtered, expected):
     assert planner.choose(facts(count, filtered)).strategy is expected
 ```
 
-- [ ] **Step 2: Verify RED**
+- **Step 2: Verify RED**
 
-Run: `uv run pytest tests/query -q`  
-Expected: imports fail.
+Historical verification covered targeted or full test coverage, including `tests/query`.
+Historical expected evidence: imports fail.
 
-- [ ] **Step 3: Implement typed indexes and inspectable planning**
+**Recorded activity 3 — Design outcome: typed indexes and inspectable planning**
 
 Maintain equality maps for keyword/integer/float/bool and sorted `(value, id)`
 entries for numeric ranges. Return `CandidateSet(ids, estimate)` only when the
 AST can be resolved exactly; otherwise return an estimate plus residual
 filter. Implement the five closed strategies and stable reason strings.
 
-- [ ] **Step 4: Verify exact plan parity and commit**
+- **Step 4: Verify exact plan parity and commit**
 
-Run: `uv run pytest tests/query -q`  
-Expected: PASS and indexed/unindexed exact searches agree.
+Historical verification covered targeted or full test coverage, including `tests/query`.
+Historical expected evidence: PASS and indexed/unindexed exact searches agree.
 
-```bash
-git add src/miniqdrant/filters src/miniqdrant/query tests/query
-git commit -m "feat: plan filtered vector searches"
-```
+## Milestone 7: Deterministic HNSW graph
 
-## Task 7: Deterministic HNSW graph
+**Recorded file scope:**
+- Added: `src/miniqdrant/index/hnsw.py`
+- Added: `tests/index/test_hnsw_graph.py`
+- Added: `tests/index/test_hnsw_search.py`
+- Added: `tests/index/test_hnsw_recall.py`
 
-**Files:**
-- Create: `src/miniqdrant/index/hnsw.py`
-- Create: `tests/index/test_hnsw_graph.py`
-- Create: `tests/index/test_hnsw_search.py`
-- Create: `tests/index/test_hnsw_recall.py`
-
-- [ ] **Step 1: Write failing graph/search tests**
+**Recorded activity 1 — Test intent: failing graph/search tests**
 
 ```python
 def test_same_seed_builds_same_graph(points):
@@ -448,41 +414,34 @@ def test_recall_improves_to_required_floor(dataset):
     assert recall >= 0.90
 ```
 
-- [ ] **Step 2: Verify RED**
+- **Step 2: Verify RED**
 
-Run: `uv run pytest tests/index/test_hnsw_graph.py tests/index/test_hnsw_search.py -q`  
-Expected: HNSW is absent.
+Historical verification covered targeted or full test coverage, including `tests/index/test_hnsw_graph.py`, `tests/index/test_hnsw_search.py`.
+Historical expected evidence: HNSW is absent.
 
-- [ ] **Step 3: Implement HNSW**
+**Recorded activity 3 — Design outcome: HNSW**
 
 Use stable point-ID bytes plus seed for level generation, bounded neighbor
 selection, bidirectional links, upper-level greedy descent, and level-zero
 best-first expansion. Track `visited_count` for labs. Traverse nonmatching
 nodes but only admit `allowed_ids` to results.
 
-- [ ] **Step 4: Verify invariants and recall**
+- **Step 4: Verify invariants and recall**
 
-Run: `uv run pytest tests/index/test_hnsw_graph.py tests/index/test_hnsw_search.py tests/index/test_hnsw_recall.py -q`  
-Expected: PASS with deterministic recall floor.
+Historical verification covered targeted or full test coverage, including `tests/index/test_hnsw_graph.py`, `tests/index/test_hnsw_search.py`, `tests/index/test_hnsw_recall.py`.
+Historical expected evidence: PASS with deterministic recall floor.
 
-- [ ] **Step 5: Commit**
+## Milestone 8: Immutable segments and HNSW planner integration
 
-```bash
-git add src/miniqdrant/index/hnsw.py tests/index
-git commit -m "feat: add deterministic HNSW retrieval"
-```
+**Recorded file scope:**
+- Added: `src/miniqdrant/segment/immutable.py`
+- Added: `src/miniqdrant/segment/builder.py`
+- Changed: `src/miniqdrant/query/executor.py`
+- Changed: `src/miniqdrant/collection.py`
+- Added: `tests/query/test_hnsw_plans.py`
+- Added: `tests/acceptance/test_cross_segment_search.py`
 
-## Task 8: Immutable segments and HNSW planner integration
-
-**Files:**
-- Create: `src/miniqdrant/segment/immutable.py`
-- Create: `src/miniqdrant/segment/builder.py`
-- Modify: `src/miniqdrant/query/executor.py`
-- Modify: `src/miniqdrant/collection.py`
-- Create: `tests/query/test_hnsw_plans.py`
-- Create: `tests/acceptance/test_cross_segment_search.py`
-
-- [ ] **Step 1: Write failing cross-segment tests**
+**Recorded activity 1 — Test intent: failing cross-segment tests**
 
 ```python
 def test_latest_version_wins_even_when_old_scores_higher(collection):
@@ -499,40 +458,35 @@ def test_delete_overlay_hides_immutable_hnsw_hit(collection):
     assert collection.search(SearchRequest((1, 0), 10)).hits == ()
 ```
 
-- [ ] **Step 2: Verify RED**
+- **Step 2: Verify RED**
 
-Run: `uv run pytest tests/query/test_hnsw_plans.py tests/acceptance/test_cross_segment_search.py -q`  
-Expected: immutable flush path fails.
+Historical verification covered targeted or full test coverage, including `tests/query/test_hnsw_plans.py`, `tests/acceptance/test_cross_segment_search.py`.
+Historical expected evidence: immutable flush path fails.
 
-- [ ] **Step 3: Implement collection-level oversampling and deduplication**
+**Recorded activity 3 — Design outcome: collection-level oversampling and deduplication**
 
 Build immutable segment images containing points, versions, payload indexes,
 and optional HNSW. Search each segment with `limit + stale_id_budget`, merge by
 external ID and greatest version, honor the collection tombstone/version map,
 then exact-rescore and collect final Top-K.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- **Step 4: Verify GREEN and commit**
 
-Run: `uv run pytest tests/query tests/acceptance/test_cross_segment_search.py -q`  
-Expected: PASS.
+Historical verification covered targeted or full test coverage, including `tests/query`, `tests/acceptance/test_cross_segment_search.py`.
+Historical expected evidence: PASS.
 
-```bash
-git add src/miniqdrant/segment src/miniqdrant/query src/miniqdrant/collection.py tests
-git commit -m "feat: search versioned immutable segments"
-```
+## Milestone 9: Versioned checksummed WAL
 
-## Task 9: Versioned checksummed WAL
+**Recorded file scope:**
+- Added: `src/miniqdrant/persistence/__init__.py`
+- Added: `src/miniqdrant/persistence/frame.py`
+- Added: `src/miniqdrant/persistence/fsync.py`
+- Added: `src/miniqdrant/persistence/wal.py`
+- Added: `tests/storage/test_wal_codec.py`
+- Added: `tests/reliability/test_wal_tail.py`
+- Added: `tests/reliability/test_wal_replay.py`
 
-**Files:**
-- Create: `src/miniqdrant/persistence/__init__.py`
-- Create: `src/miniqdrant/persistence/frame.py`
-- Create: `src/miniqdrant/persistence/fsync.py`
-- Create: `src/miniqdrant/persistence/wal.py`
-- Create: `tests/storage/test_wal_codec.py`
-- Create: `tests/reliability/test_wal_tail.py`
-- Create: `tests/reliability/test_wal_replay.py`
-
-- [ ] **Step 1: Write failing codec and recovery tests**
+**Recorded activity 1 — Test intent: failing codec and recovery tests**
 
 ```python
 def test_wal_round_trip_is_binary_safe(tmp_path):
@@ -549,41 +503,34 @@ def test_incomplete_active_tail_is_truncated(tmp_path):
     assert [item.sequence for item in reopened.replay()] == [1, 2]
 ```
 
-- [ ] **Step 2: Verify RED**
+- **Step 2: Verify RED**
 
-Run: `uv run pytest tests/storage/test_wal_codec.py tests/reliability/test_wal_tail.py -q`  
-Expected: persistence modules absent.
+Historical verification covered targeted or full test coverage, including `tests/storage/test_wal_codec.py`, `tests/reliability/test_wal_tail.py`.
+Historical expected evidence: persistence modules absent.
 
-- [ ] **Step 3: Implement stable operation encoding**
+**Recorded activity 3 — Design outcome: stable operation encoding**
 
 Use explicit tags, big-endian fixed-width integers, length-prefixed UTF-8/JSON
 payloads, canonical JSON separators and key ordering, frame version, and CRC32.
 `Wal.append` assigns strictly increasing sequences. Only the active incomplete
 tail is recoverably truncated; earlier corruption raises `CorruptionError`.
 
-- [ ] **Step 4: Verify durability policy and replay**
+- **Step 4: Verify durability policy and replay**
 
-Run: `uv run pytest tests/storage/test_wal_codec.py tests/reliability/test_wal_tail.py tests/reliability/test_wal_replay.py -q`  
-Expected: PASS.
+Historical verification covered targeted or full test coverage, including `tests/storage/test_wal_codec.py`, `tests/reliability/test_wal_tail.py`, `tests/reliability/test_wal_replay.py`.
+Historical expected evidence: PASS.
 
-- [ ] **Step 5: Commit**
+## Milestone 10: Durable segment codec and atomic manifest
 
-```bash
-git add src/miniqdrant/persistence tests/storage tests/reliability
-git commit -m "feat: persist ordered point operations in WAL"
-```
+**Recorded file scope:**
+- Added: `src/miniqdrant/segment/codec.py`
+- Added: `src/miniqdrant/persistence/manifest.py`
+- Changed: `src/miniqdrant/segment/builder.py`
+- Added: `tests/storage/test_segment_codec.py`
+- Added: `tests/storage/test_manifest.py`
+- Added: `tests/reliability/test_manifest_publish.py`
 
-## Task 10: Durable segment codec and atomic manifest
-
-**Files:**
-- Create: `src/miniqdrant/segment/codec.py`
-- Create: `src/miniqdrant/persistence/manifest.py`
-- Modify: `src/miniqdrant/segment/builder.py`
-- Create: `tests/storage/test_segment_codec.py`
-- Create: `tests/storage/test_manifest.py`
-- Create: `tests/reliability/test_manifest_publish.py`
-
-- [ ] **Step 1: Write failing segment/manifest tests**
+**Recorded activity 1 — Test intent: failing segment/manifest tests**
 
 ```python
 def test_segment_round_trip_preserves_versions_indexes_and_graph(tmp_path, image):
@@ -599,39 +546,34 @@ def test_failed_current_swap_keeps_old_manifest(tmp_path, failure_gate):
     assert store.load_current().generation == 1
 ```
 
-- [ ] **Step 2: Verify RED**
+- **Step 2: Verify RED**
 
-Run: `uv run pytest tests/storage/test_segment_codec.py tests/storage/test_manifest.py tests/reliability/test_manifest_publish.py -q`  
-Expected: codec/store absent.
+Historical verification covered targeted or full test coverage, including `tests/storage/test_segment_codec.py`, `tests/storage/test_manifest.py`, `tests/reliability/test_manifest_publish.py`.
+Historical expected evidence: codec/store absent.
 
-- [ ] **Step 3: Implement custom files and atomic publication**
+**Recorded activity 3 — Design outcome: custom files and atomic publication**
 
 Write versioned checksummed `points.bin`, `payloads.bin`, `versions.bin`,
 `deleted.bin`, `hnsw.bin`, `payload-indexes.bin`, and optional
 `quantized.bin`. Fsync files, temporary segment directory, manifest, and parent
 directory in order. Replace `CURRENT` only after all referenced files exist.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- **Step 4: Verify GREEN and commit**
 
-Run: `uv run pytest tests/storage tests/reliability/test_manifest_publish.py -q`  
-Expected: PASS.
+Historical verification covered targeted or full test coverage, including `tests/storage`, `tests/reliability/test_manifest_publish.py`.
+Historical expected evidence: PASS.
 
-```bash
-git add src/miniqdrant/segment src/miniqdrant/persistence tests/storage tests/reliability
-git commit -m "feat: publish durable segment manifests"
-```
+## Milestone 11: Flush, reopen, and WAL-boundary recovery
 
-## Task 11: Flush, reopen, and WAL-boundary recovery
+**Recorded file scope:**
+- Changed: `src/miniqdrant/collection.py`
+- Changed: `src/miniqdrant/database.py`
+- Added: `src/miniqdrant/segment/set.py`
+- Added: `tests/reliability/test_restart.py`
+- Added: `tests/reliability/test_crash_boundaries.py`
+- Added: `tests/acceptance/test_cross_restart.py`
 
-**Files:**
-- Modify: `src/miniqdrant/collection.py`
-- Modify: `src/miniqdrant/database.py`
-- Create: `src/miniqdrant/segment/set.py`
-- Create: `tests/reliability/test_restart.py`
-- Create: `tests/reliability/test_crash_boundaries.py`
-- Create: `tests/acceptance/test_cross_restart.py`
-
-- [ ] **Step 1: Write failing restart tests**
+**Recorded activity 1 — Test intent: failing restart tests**
 
 ```python
 def test_acknowledged_upsert_survives_restart(tmp_path):
@@ -649,43 +591,38 @@ def test_crash_after_wal_before_apply_recovers_once(tmp_path, failure_gate):
     assert reopen(tmp_path).collection("items").count() == 1
 ```
 
-- [ ] **Step 2: Verify RED**
+- **Step 2: Verify RED**
 
-Run: `uv run pytest tests/reliability/test_restart.py tests/reliability/test_crash_boundaries.py -q`  
-Expected: restart does not yet restore.
+Historical verification covered targeted or full test coverage, including `tests/reliability/test_restart.py`, `tests/reliability/test_crash_boundaries.py`.
+Historical expected evidence: restart does not yet restore.
 
-- [ ] **Step 3: Wire mutation, flush, and startup**
+- **Step 3: Wire mutation, flush, and startup**
 
 Make WAL the source of operation versions. Flush freezes the appendable view,
 writes a plain immutable segment, publishes replay boundary, and then permits
 WAL truncation. Startup validates the root, reconstructs greatest versions,
 replays newer operations idempotently, and opens a fresh appendable segment.
 
-- [ ] **Step 4: Verify restart matrix and commit**
+- **Step 4: Verify restart matrix and commit**
 
-Run: `uv run pytest tests/reliability tests/acceptance/test_cross_restart.py -q`  
-Expected: PASS for before/after WAL, segment write, manifest, and CURRENT gates.
+Historical verification covered targeted or full test coverage, including `tests/reliability`, `tests/acceptance/test_cross_restart.py`.
+Historical expected evidence: PASS for before/after WAL, segment write, manifest, and CURRENT gates.
 
-```bash
-git add src/miniqdrant tests/reliability tests/acceptance
-git commit -m "feat: recover collections from manifest and WAL"
-```
+## Milestone 12: Online indexing, merge, vacuum, and safe reclamation
 
-## Task 12: Online indexing, merge, vacuum, and safe reclamation
+**Recorded file scope:**
+- Added: `src/miniqdrant/optimizer/__init__.py`
+- Added: `src/miniqdrant/optimizer/policy.py`
+- Added: `src/miniqdrant/optimizer/failures.py`
+- Added: `src/miniqdrant/optimizer/optimizer.py`
+- Added: `src/miniqdrant/segment/references.py`
+- Changed: `src/miniqdrant/collection.py`
+- Added: `tests/concurrency/test_online_optimize.py`
+- Added: `tests/storage/test_merge.py`
+- Added: `tests/storage/test_vacuum.py`
+- Added: `tests/reliability/test_optimizer_publish.py`
 
-**Files:**
-- Create: `src/miniqdrant/optimizer/__init__.py`
-- Create: `src/miniqdrant/optimizer/policy.py`
-- Create: `src/miniqdrant/optimizer/failures.py`
-- Create: `src/miniqdrant/optimizer/optimizer.py`
-- Create: `src/miniqdrant/segment/references.py`
-- Modify: `src/miniqdrant/collection.py`
-- Create: `tests/concurrency/test_online_optimize.py`
-- Create: `tests/storage/test_merge.py`
-- Create: `tests/storage/test_vacuum.py`
-- Create: `tests/reliability/test_optimizer_publish.py`
-
-- [ ] **Step 1: Write failing late-write and reader tests**
+**Recorded activity 1 — Test intent: failing late-write and reader tests**
 
 ```python
 def test_write_during_build_wins_after_publish(collection, gate):
@@ -706,12 +643,12 @@ def test_existing_view_can_finish_after_merge(collection):
     assert all(not path.exists() for path in old_paths)
 ```
 
-- [ ] **Step 2: Verify RED**
+- **Step 2: Verify RED**
 
-Run: `uv run pytest tests/concurrency/test_online_optimize.py tests/storage/test_merge.py -q`  
-Expected: optimizer absent.
+Historical verification covered targeted or full test coverage, including `tests/concurrency/test_online_optimize.py`, `tests/storage/test_merge.py`.
+Historical expected evidence: optimizer absent.
 
-- [ ] **Step 3: Implement explicit optimizer transitions**
+**Recorded activity 3 — Design outcome: explicit optimizer transitions**
 
 Capture source segments and version V, build outside the publication lock,
 discard replacement records whose IDs have a later global version, publish one
@@ -719,28 +656,21 @@ new manifest, then retire old paths through reference counts. Implement
 indexing, smallest-segment merge, deleted-ratio vacuum, and deterministic
 policy selection.
 
-- [ ] **Step 4: Verify failure and concurrency paths**
+- **Step 4: Verify failure and concurrency paths**
 
-Run: `uv run pytest tests/concurrency tests/storage/test_merge.py tests/storage/test_vacuum.py tests/reliability/test_optimizer_publish.py -q`  
-Expected: PASS with no hidden late write or early deletion.
+Historical verification covered targeted or full test coverage, including `tests/concurrency`, `tests/storage/test_merge.py`, `tests/storage/test_vacuum.py`, `tests/reliability/test_optimizer_publish.py`.
+Historical expected evidence: PASS with no hidden late write or early deletion.
 
-- [ ] **Step 5: Commit**
+## Milestone 13: Scalar quantization with exact rescoring
 
-```bash
-git add src/miniqdrant/optimizer src/miniqdrant/segment src/miniqdrant/collection.py tests
-git commit -m "feat: optimize segments without blocking readers"
-```
+**Recorded file scope:**
+- Added: `src/miniqdrant/index/quantization.py`
+- Changed: `src/miniqdrant/segment/builder.py`
+- Changed: `src/miniqdrant/query/executor.py`
+- Added: `tests/index/test_quantization.py`
+- Added: `tests/query/test_quantized_rescore.py`
 
-## Task 13: Scalar quantization with exact rescoring
-
-**Files:**
-- Create: `src/miniqdrant/index/quantization.py`
-- Modify: `src/miniqdrant/segment/builder.py`
-- Modify: `src/miniqdrant/query/executor.py`
-- Create: `tests/index/test_quantization.py`
-- Create: `tests/query/test_quantized_rescore.py`
-
-- [ ] **Step 1: Write failing calibration and recall tests**
+**Recorded activity 1 — Test intent: failing calibration and recall tests**
 
 ```python
 def test_int8_round_trip_has_bounded_error(vectors):
@@ -757,38 +687,33 @@ def test_rescore_uses_original_vectors(segment, queries):
         assert all(hit.score == exact_score(query, segment.vector(hit.id)) for hit in result)
 ```
 
-- [ ] **Step 2: Verify RED**
+- **Step 2: Verify RED**
 
-Run: `uv run pytest tests/index/test_quantization.py tests/query/test_quantized_rescore.py -q`  
-Expected: quantization absent.
+Historical verification covered targeted or full test coverage, including `tests/index/test_quantization.py`, `tests/query/test_quantized_rescore.py`.
+Historical expected evidence: quantization absent.
 
-- [ ] **Step 3: Implement per-dimension int8 quantization**
+**Recorded activity 3 — Design outcome: per-dimension int8 quantization**
 
 Store per-dimension minima and scales; constant dimensions use a zero code and
 zero scale. Use quantized vectors only for candidate scoring, oversample by a
 validated factor, fetch original floats, and exact-rescore final candidates.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- **Step 4: Verify GREEN and commit**
 
-Run: `uv run pytest tests/index/test_quantization.py tests/query/test_quantized_rescore.py -q`  
-Expected: PASS with required recall floor.
+Historical verification covered targeted or full test coverage, including `tests/index/test_quantization.py`, `tests/query/test_quantized_rescore.py`.
+Historical expected evidence: PASS with required recall floor.
 
-```bash
-git add src/miniqdrant/index/quantization.py src/miniqdrant/segment src/miniqdrant/query tests
-git commit -m "feat: rescore scalar-quantized candidates"
-```
+## Milestone 14: Atomic collection snapshots and restore
 
-## Task 14: Atomic collection snapshots and restore
+**Recorded file scope:**
+- Added: `src/miniqdrant/persistence/snapshot.py`
+- Changed: `src/miniqdrant/collection.py`
+- Changed: `src/miniqdrant/database.py`
+- Added: `tests/reliability/test_snapshot.py`
+- Added: `tests/reliability/test_snapshot_restore_failure.py`
+- Added: `tests/acceptance/test_snapshot_roundtrip.py`
 
-**Files:**
-- Create: `src/miniqdrant/persistence/snapshot.py`
-- Modify: `src/miniqdrant/collection.py`
-- Modify: `src/miniqdrant/database.py`
-- Create: `tests/reliability/test_snapshot.py`
-- Create: `tests/reliability/test_snapshot_restore_failure.py`
-- Create: `tests/acceptance/test_snapshot_roundtrip.py`
-
-- [ ] **Step 1: Write failing snapshot tests**
+**Recorded activity 1 — Test intent: failing snapshot tests**
 
 ```python
 def test_snapshot_restores_searchable_collection(tmp_path):
@@ -806,47 +731,42 @@ def test_invalid_snapshot_never_replaces_live_collection(tmp_path):
     assert live.retrieve([1])
 ```
 
-- [ ] **Step 2: Verify RED**
+- **Step 2: Verify RED**
 
-Run: `uv run pytest tests/reliability/test_snapshot.py tests/reliability/test_snapshot_restore_failure.py -q`  
-Expected: snapshot API absent.
+Historical verification covered targeted or full test coverage, including `tests/reliability/test_snapshot.py`, `tests/reliability/test_snapshot_restore_failure.py`.
+Historical expected evidence: snapshot API absent.
 
-- [ ] **Step 3: Implement snapshot root and validate-before-replace**
+**Recorded activity 3 — Design outcome: snapshot root and validate-before-replace**
 
 Flush to a committed manifest, copy or hardlink only referenced immutable
 files, include required WAL suffix, write checksums, fsync, and rename the
 temporary snapshot. Restore into a temporary collection, validate and open it,
 then atomically swap the directory.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- **Step 4: Verify GREEN and commit**
 
-Run: `uv run pytest tests/reliability/test_snapshot.py tests/reliability/test_snapshot_restore_failure.py tests/acceptance/test_snapshot_roundtrip.py -q`  
-Expected: PASS.
+Historical verification covered targeted or full test coverage, including `tests/reliability/test_snapshot.py`, `tests/reliability/test_snapshot_restore_failure.py`, `tests/acceptance/test_snapshot_roundtrip.py`.
+Historical expected evidence: PASS.
 
-```bash
-git add src/miniqdrant/persistence/snapshot.py src/miniqdrant tests/reliability tests/acceptance
-git commit -m "feat: create and restore atomic snapshots"
-```
+## Milestone 15: CLI, labs, lifecycle, and documentation
 
-## Task 15: CLI, labs, lifecycle, and documentation
+**Recorded file scope:**
+- Added: `src/miniqdrant/cli.py`
+- Added: `src/miniqdrant/labs/__init__.py`
+- Added: `src/miniqdrant/labs/recall.py`
+- Added: `src/miniqdrant/labs/filtering.py`
+- Added: `src/miniqdrant/labs/segments.py`
+- Added: `src/miniqdrant/labs/recovery.py`
+- Added: `tests/acceptance/test_cli.py`
+- Added: `tests/acceptance/test_labs.py`
+- Added: `tests/contract/test_lifecycle.py`
+- Added: `README.md`
+- Added: `ARCHITECTURE.md`
+- Added: `DIFFERENCES_FROM_QDRANT.md`
+- Added: `docs/behavior-matrix.md`
+- Added: `docs/storage-format.md`
 
-**Files:**
-- Create: `src/miniqdrant/cli.py`
-- Create: `src/miniqdrant/labs/__init__.py`
-- Create: `src/miniqdrant/labs/recall.py`
-- Create: `src/miniqdrant/labs/filtering.py`
-- Create: `src/miniqdrant/labs/segments.py`
-- Create: `src/miniqdrant/labs/recovery.py`
-- Create: `tests/acceptance/test_cli.py`
-- Create: `tests/acceptance/test_labs.py`
-- Create: `tests/contract/test_lifecycle.py`
-- Create: `README.md`
-- Create: `ARCHITECTURE.md`
-- Create: `DIFFERENCES_FROM_QDRANT.md`
-- Create: `docs/behavior-matrix.md`
-- Create: `docs/storage-format.md`
-
-- [ ] **Step 1: Write failing CLI/lifecycle tests**
+**Recorded activity 1 — Test intent: failing CLI/lifecycle tests**
 
 ```python
 def test_cli_create_upsert_search(tmp_path, cli):
@@ -862,47 +782,35 @@ def test_close_is_idempotent_and_rejects_new_work(collection):
         collection.search(SearchRequest((1, 0), 1))
 ```
 
-- [ ] **Step 2: Verify RED**
+- **Step 2: Verify RED**
 
-Run: `uv run pytest tests/acceptance/test_cli.py tests/contract/test_lifecycle.py -q`  
-Expected: CLI/lifecycle behavior incomplete.
+Historical verification covered targeted or full test coverage, including `tests/acceptance/test_cli.py`, `tests/contract/test_lifecycle.py`.
+Historical expected evidence: CLI/lifecycle behavior incomplete.
 
-- [ ] **Step 3: Implement thin CLI and deterministic labs**
+**Recorded activity 3 — Design outcome: thin CLI and deterministic labs**
 
 Use `argparse`. All CLI commands call public `Database`/`Collection` methods.
 Labs print JSON metrics with fixed seeds and bounded fixtures. Document exact
 versus approximate behavior, acknowledgement boundaries, file formats, failure
 experiments, and every deliberate Qdrant difference.
 
-- [ ] **Step 4: Verify examples and docs**
+- **Step 4: Verify examples and docs**
 
-Run:
+Historical verification covered targeted or full test coverage, including `tests/acceptance/test_cli.py`, `tests/acceptance/test_labs.py`, `tests/contract/test_lifecycle.py`.
 
-```bash
-uv run miniqdrant --help
-uv run pytest tests/acceptance/test_cli.py tests/acceptance/test_labs.py tests/contract/test_lifecycle.py -q
-```
+Historical expected evidence: help exits 0 and tests PASS.
 
-Expected: help exits 0 and tests PASS.
+## Milestone 16: Full acceptance and repository closure
 
-- [ ] **Step 5: Commit**
+**Recorded file scope:**
+- Added: `tools/__init__.py`
+- Added: `tools/count_sloc.py`
+- Added: `tests/test_sloc_report.py`
+- Added: `tests/acceptance/test_final_acceptance.py`
+- Changed: `docs/behavior-matrix.md`
+- Changed: `README.md`
 
-```bash
-git add src/miniqdrant/cli.py src/miniqdrant/labs tests README.md ARCHITECTURE.md DIFFERENCES_FROM_QDRANT.md docs
-git commit -m "docs: publish MiniQdrant reference project"
-```
-
-## Task 16: Full acceptance and repository closure
-
-**Files:**
-- Create: `tools/__init__.py`
-- Create: `tools/count_sloc.py`
-- Create: `tests/test_sloc_report.py`
-- Create: `tests/acceptance/test_final_acceptance.py`
-- Modify: `docs/behavior-matrix.md`
-- Modify: `README.md`
-
-- [ ] **Step 1: Add the final behavior matrix test**
+**Recorded activity 1 — Design outcome: the final behavior matrix test**
 
 ```python
 def test_full_semantic_closure(tmp_path):
@@ -919,25 +827,18 @@ def test_full_semantic_closure(tmp_path):
     assert recall_at_k(approximate.hits, exact.hits) >= 0.90
 ```
 
-- [ ] **Step 2: Run focused acceptance**
+**Recorded activity 2 — Verification intent: focused acceptance**
 
-Run: `uv run pytest tests/acceptance -q`  
-Expected: PASS.
+Historical verification covered targeted or full test coverage, including `tests/acceptance`.
+Historical expected evidence: PASS.
 
-- [ ] **Step 3: Run complete verification**
+**Recorded activity 3 — Verification intent: complete verification**
 
-Run:
+Historical verification covered targeted or full test coverage, static analysis, bytecode compilation, diff hygiene.
 
-```bash
-uv run ruff check .
-uv run python -m compileall -q src tests tools
-uv run pytest -q
-git diff --check
-```
+Historical expected evidence: all commands exit 0.
 
-Expected: all commands exit 0.
-
-- [ ] **Step 4: Audit requirements against direct evidence**
+- **Step 4: Audit requirements against direct evidence**
 
 Update `docs/behavior-matrix.md` so every design goal and invariant names:
 
@@ -950,23 +851,10 @@ documented Qdrant difference
 
 Search for unsupported claims:
 
-```bash
-rg -n "production|exactly|compatible|atomic|durable|lossless|no data loss" README.md ARCHITECTURE.md DIFFERENCES_FROM_QDRANT.md docs src
-```
-
 Every retained claim must be scoped and proved by the matrix.
 
-- [ ] **Step 5: Verify clean final state and commit**
+- **Step 5: Verify clean final state and commit**
 
-```bash
-uv run ruff check .
-uv run pytest -q
-git diff --check
-git status --short
-git add README.md docs tools tests
-git commit -m "test: accept complete MiniQdrant project"
-git status --short --branch
-```
+Historical verification covered targeted or full test coverage, static analysis, diff hygiene, repository-state inspection.
 
-Expected: branch `main`, clean worktree, all tests passing.
-
+Historical expected evidence: branch `main`, clean worktree, all tests passing.

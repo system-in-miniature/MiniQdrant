@@ -1,3 +1,10 @@
+"""Mechanism lab: compare HNSW candidates with exact segment search.
+
+This experiment deliberately calls ``ImmutableSegment.search`` and
+``SegmentSearchRequest`` directly so approximate and exact execution can be
+compared at the internal per-segment mechanism boundary.
+"""
+
 from __future__ import annotations
 
 import random
@@ -56,3 +63,22 @@ def run_recall_lab(
         "recall_at_5": sum(recalls) / max(1, len(recalls)),
         "seed": seed,
     }
+
+
+def main() -> None:
+    result = run_recall_lab(seed=11, points=80, queries=5)
+
+    print(
+        "Recall lab: "
+        f"seed={result['seed']}, points={result['points']}, queries={result['queries']}"
+    )
+    print(f"Mean recall@5: {result['recall_at_5']:.3f}")
+    print()
+    print("Interpretation:")
+    print("- exact search supplies the top-5 reference set for each query.")
+    print("- recall@5 is the fraction of those ids also returned by internal HNSW search.")
+    print("- the fixed seed makes this mechanism experiment reproducible.")
+
+
+if __name__ == "__main__":
+    main()

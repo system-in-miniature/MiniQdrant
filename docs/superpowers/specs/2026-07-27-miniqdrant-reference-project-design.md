@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-27  
 **Status:** Approved under delegated final-acceptance authority  
-**Repository:** `~/MiniQdrant-workspace/MiniQdrant`  
+**Repository:** `.`  
 **Package:** `miniqdrant`  
 **CLI:** `miniqdrant`
 
@@ -625,4 +625,3 @@ The project is complete only when:
 - formatting, static checks, compilation, the full test suite, and
   `git diff --check` pass from a clean checkout;
 - the git worktree is clean and the completed implementation is committed.
-
