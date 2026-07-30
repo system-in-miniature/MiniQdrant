@@ -72,4 +72,4 @@ compatibility claim.
    `segment/references.py` for online replacement and delayed deletion.
 
 For behavioral consequences rather than component correspondence, see
-[`DIFFERENCES_FROM_QDRANT.md`](../DIFFERENCES_FROM_QDRANT.md).
+[`DIFFERENCES_FROM_QDRANT.md`](differences.md).

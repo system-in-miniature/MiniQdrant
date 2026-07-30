@@ -1,4 +1,4 @@
-> **Language**: [English](../../ARCHITECTURE.md) | 简体中文
+> **Language**: [English](../architecture.md) | 简体中文
 
 # 架构
 

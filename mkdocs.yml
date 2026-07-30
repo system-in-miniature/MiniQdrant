@@ -1,0 +1,45 @@
+site_name: MiniQdrant Tutorial
+site_description: A chapter-based guide to MiniQdrant and the Qdrant mechanisms it models
+site_url: https://system-in-miniature.github.io/MiniQdrant/
+repo_url: https://github.com/system-in-miniature/MiniQdrant
+repo_name: system-in-miniature/MiniQdrant
+docs_dir: docs
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+nav:
+  - English:
+      - "Chapter 1 · Quick Start": index.md
+      - "Chapter 2 · Architecture Tour": architecture.md
+      - "Chapter 3 · Mechanisms and Qdrant Mapping": qdrant-mapping.md
+      - "Chapter 4 · Hands-on Labs": labs-guide.md
+      - "Chapter 5 · Differences from Qdrant": differences.md
+      - Appendix:
+          - "Storage Format": storage-format.md
+          - "Behavior Matrix": behavior-matrix.md
+          - "Design History Archive": superpowers/README.md
+  - 中文版:
+      - "第 1 章 · 快速开始": zh/index.md
+      - "第 2 章 · 架构总览": zh/ARCHITECTURE.md
+      - "第 3 章 · 机制与 Qdrant 映射": zh/qdrant-mapping.md
+      - "第 4 章 · 动手实验": zh/labs-guide.md
+      - "第 5 章 · 与 Qdrant 的差异": zh/DIFFERENCES_FROM_QDRANT.md
+      - 附录:
+          - "存储格式": zh/storage-format.md
+          - "行为矩阵": zh/behavior-matrix.md
+          - "Superpowers 设计存档": superpowers/README.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - pymdownx.details
+  - pymdownx.superfences
+
+strict: true

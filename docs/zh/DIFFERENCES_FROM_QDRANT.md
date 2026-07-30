@@ -1,4 +1,4 @@
-> **Language**: [English](../../DIFFERENCES_FROM_QDRANT.md) | 简体中文
+> **Language**: [English](../differences.md) | 简体中文
 
 # 与 Qdrant 的差异
 
