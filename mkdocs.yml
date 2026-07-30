@@ -17,22 +17,46 @@ theme:
 
 nav:
   - English:
-      - "Chapter 1 · Quick Start": index.md
-      - "Chapter 2 · Architecture Tour": architecture.md
-      - "Chapter 3 · Mechanisms and Qdrant Mapping": qdrant-mapping.md
-      - "Chapter 4 · Hands-on Labs": labs-guide.md
-      - "Chapter 5 · Differences from Qdrant": differences.md
-      - Appendix:
+      - "Book Contents": tutorial/index.md
+      - Tutorial:
+          - "1 · Meet MiniQdrant": tutorial/01-getting-started.md
+          - "2 · Points, Payloads, and Distance": tutorial/02-points-payload.md
+          - "3 · WAL and Manifest Publication": tutorial/03-wal-manifest.md
+          - "4 · The Segment Lifecycle": tutorial/04-segments.md
+          - "5 · HNSW from Layers to Pruning": tutorial/05-hnsw.md
+          - "6 · Filtering": tutorial/06-filtering.md
+          - "7 · Query Planning": tutorial/07-planner.md
+          - "8 · Quantization": tutorial/08-quantization.md
+          - "9 · Online Optimization": tutorial/09-optimizer.md
+          - "10 · Snapshots and Methodology": tutorial/10-snapshots-methodology.md
+      - Reference:
+          - "Quick Start": index.md
+          - "Architecture": architecture.md
+          - "Qdrant Mapping": qdrant-mapping.md
+          - "Hands-on Labs": labs-guide.md
+          - "Differences from Qdrant": differences.md
           - "Storage Format": storage-format.md
           - "Behavior Matrix": behavior-matrix.md
           - "Design History Archive": superpowers/README.md
   - 中文版:
-      - "第 1 章 · 快速开始": zh/index.md
-      - "第 2 章 · 架构总览": zh/ARCHITECTURE.md
-      - "第 3 章 · 机制与 Qdrant 映射": zh/qdrant-mapping.md
-      - "第 4 章 · 动手实验": zh/labs-guide.md
-      - "第 5 章 · 与 Qdrant 的差异": zh/DIFFERENCES_FROM_QDRANT.md
-      - 附录:
+      - "全书目录": zh/tutorial/index.md
+      - 教程:
+          - "1 · 认识 MiniQdrant": zh/tutorial/01-getting-started.md
+          - "2 · 点与负载": zh/tutorial/02-points-payload.md
+          - "3 · WAL 与清单": zh/tutorial/03-wal-manifest.md
+          - "4 · 段生命周期": zh/tutorial/04-segments.md
+          - "5 · HNSW": zh/tutorial/05-hnsw.md
+          - "6 · 过滤": zh/tutorial/06-filtering.md
+          - "7 · 查询规划": zh/tutorial/07-planner.md
+          - "8 · 量化": zh/tutorial/08-quantization.md
+          - "9 · 在线优化": zh/tutorial/09-optimizer.md
+          - "10 · 快照与方法论": zh/tutorial/10-snapshots-methodology.md
+      - 参考资料:
+          - "快速开始": zh/index.md
+          - "架构总览": zh/ARCHITECTURE.md
+          - "Qdrant 映射": zh/qdrant-mapping.md
+          - "动手实验": zh/labs-guide.md
+          - "与 Qdrant 的差异": zh/DIFFERENCES_FROM_QDRANT.md
           - "存储格式": zh/storage-format.md
           - "行为矩阵": zh/behavior-matrix.md
           - "Superpowers 设计存档": superpowers/README.md
