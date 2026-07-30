@@ -2,7 +2,7 @@
 
 # MiniQdrant
 
-[![CI](https://github.com/system-in-miniature/MiniQdrant/actions/workflows/ci.yml/badge.svg)](https://github.com/system-in-miniature/MiniQdrant/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)
+[![CI](https://github.com/system-in-miniature/mini-qdrant/actions/workflows/ci.yml/badge.svg)](https://github.com/system-in-miniature/mini-qdrant/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)
 
 MiniQdrant is a direct-first Python reference implementation of filtered vector
 search, versioned immutable segments, online optimization, and durable recovery.

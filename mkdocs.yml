@@ -1,8 +1,8 @@
 site_name: MiniQdrant Tutorial
 site_description: A chapter-based guide to MiniQdrant and the Qdrant mechanisms it models
-site_url: https://system-in-miniature.github.io/MiniQdrant/
-repo_url: https://github.com/system-in-miniature/MiniQdrant
-repo_name: system-in-miniature/MiniQdrant
+site_url: https://system-in-miniature.github.io/mini-qdrant/
+repo_url: https://github.com/system-in-miniature/mini-qdrant
+repo_name: system-in-miniature/mini-qdrant
 docs_dir: docs
 
 theme:

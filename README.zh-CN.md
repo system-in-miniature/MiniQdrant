@@ -2,7 +2,7 @@
 
 # MiniQdrant
 
-[![CI](https://github.com/system-in-miniature/MiniQdrant/actions/workflows/ci.yml/badge.svg)](https://github.com/system-in-miniature/MiniQdrant/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)
+[![CI](https://github.com/system-in-miniature/mini-qdrant/actions/workflows/ci.yml/badge.svg)](https://github.com/system-in-miniature/mini-qdrant/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)
 
 MiniQdrant 是一个直达机制优先（direct-first）的 Python 参考实现，涵盖过滤向量搜索、版本化不可变分段（immutable segment）、在线优化和持久恢复。它旨在揭示单节点向量数据库背后的机制，而不是复刻 Qdrant 的网络 API 或部署表面。
 
