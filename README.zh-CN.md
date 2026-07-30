@@ -2,6 +2,8 @@
 
 # MiniQdrant
 
+[![CI](https://github.com/system-in-miniature/MiniQdrant/actions/workflows/ci.yml/badge.svg)](https://github.com/system-in-miniature/MiniQdrant/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)
+
 MiniQdrant 是一个直达机制优先（direct-first）的 Python 参考实现，涵盖过滤向量搜索、版本化不可变分段（immutable segment）、在线优化和持久恢复。它旨在揭示单节点向量数据库背后的机制，而不是复刻 Qdrant 的网络 API 或部署表面。
 
 ```text
@@ -80,3 +82,7 @@ uv run miniqdrant restore ./snapshots/items-001 ./restored items
 ## 可靠性边界
 
 一项已确认的变更已经跨越所配置的预写日志持久性边界（WAL durability boundary）。在默认的 `always` 策略下，其帧会先执行 fsync，再应用到内存。发布清单后，新的不可变分段集合会通过 `CURRENT` 对重启恢复可见。搜索采用最大版本解析（greatest-version resolution），因此重放和暂时存在的跨分段重复记录具有幂等性。这是单进程参考运行时；它不对分布式一致性或副本确认作任何声明。
+
+## 商标声明
+
+MiniQdrant 是独立的教学项目，与 Qdrant Solutions GmbH 无隶属、背书或赞助关系。"Qdrant" 商标归其所有者所有。

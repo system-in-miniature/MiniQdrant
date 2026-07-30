@@ -2,6 +2,8 @@
 
 # MiniQdrant
 
+[![CI](https://github.com/system-in-miniature/MiniQdrant/actions/workflows/ci.yml/badge.svg)](https://github.com/system-in-miniature/MiniQdrant/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)
+
 MiniQdrant is a direct-first Python reference implementation of filtered vector
 search, versioned immutable segments, online optimization, and durable recovery.
 It is built to expose the mechanisms behind a single-node vector database—not
@@ -100,3 +102,7 @@ Manifest publication makes a new immutable segment set restart-visible through
 `CURRENT`. Search uses greatest-version resolution, so replay and temporary
 cross-segment duplicates are idempotent. This is a single-process reference
 runtime; it makes no distributed-consistency or replica-acknowledgement claim.
+
+## Trademark Notice
+
+MiniQdrant is an independent educational project. It is not affiliated with, endorsed by, or sponsored by Qdrant Solutions GmbH. "Qdrant" is a trademark of its respective owner.

@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: uv sync --dev
+      - name: Run tests
+        run: uv run pytest -q
+      - name: Smoke labs
+        run: |
+          uv run python src/miniqdrant/labs/filtering.py
+          uv run python src/miniqdrant/labs/plan_comparison.py
+          uv run python src/miniqdrant/labs/recall.py
+          uv run python src/miniqdrant/labs/recovery.py
+          uv run python src/miniqdrant/labs/segments.py
