@@ -133,7 +133,7 @@ def validate_point(point: Point, config: CollectionConfig) -> StoredPoint:
     return StoredPoint(point_id, vector, payload, version=0, deleted=False)
 ```
 
-Use Python 3.12, hatchling, src layout, ruff, pytest, and a standard-library
+The design used Python 3.12, hatchling, src layout, ruff, pytest, and a standard-library
 runtime. Export the stable public types from `miniqdrant.__init__`.
 
 **Recorded activity 4 — Verification intent: focused verification**
@@ -171,7 +171,7 @@ def test_topk_breaks_equal_scores_by_canonical_id():
     assert [candidate.point_id for candidate in collector.results()] == [1, 2]
 ```
 
-- **Step 2: Verify RED**
+**Recorded activity 2 — Initial failure evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/unit/test_metrics.py`, `tests/unit/test_topk.py`.
 Historical expected evidence: imports fail.
@@ -188,7 +188,7 @@ def score(distance: Distance, left: Vector, right: Vector) -> float:
 `TopK` retains at most K candidates and returns `(-score, point_id_sort_key)`
 ordering without using point IDs as vector-internal offsets.
 
-- **Step 4: Verify GREEN and commit**
+**Recorded activity 4 — Passing verification evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/unit/test_metrics.py`, `tests/unit/test_topk.py`.
 Historical expected evidence: PASS.
@@ -217,14 +217,14 @@ def test_missing_path_does_not_match_range():
     assert not matches_filter(1, {}, Filter(must=(Range("price", gte=1),)))
 ```
 
-- **Step 2: Verify RED**
+**Recorded activity 2 — Initial failure evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/contract/test_filters.py`.
 Historical expected evidence: imports fail.
 
 **Recorded activity 3 — Design outcome: a closed validated AST**
 
-Implement frozen `Match`, `Range`, `HasId`, and recursive `Filter`. Resolve dot
+The recorded implementation provided frozen `Match`, `Range`, `HasId`, and recursive `Filter`. Resolve dot
 paths through objects and flatten one array level into candidate scalar values.
 Reject empty paths, non-finite range bounds, incomparable bound types, and an
 empty `should` semantic ambiguity.
@@ -241,7 +241,7 @@ def matches_filter(point_id, payload, filter_):
     )
 ```
 
-- **Step 4: Verify GREEN and commit**
+**Recorded activity 4 — Passing verification evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/contract/test_filters.py`.
 Historical expected evidence: PASS.
@@ -275,7 +275,7 @@ def test_stale_version_cannot_resurrect_deleted_point(config):
     assert segment.get(1) is None
 ```
 
-- **Step 2: Verify RED**
+**Recorded activity 2 — Initial failure evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/index/test_plain.py`, `tests/contract/test_mutable_segment.py`.
 Historical expected evidence: imports fail.
@@ -287,7 +287,7 @@ Define `PointRecord`, `ScoredCandidate`, `SegmentSearchRequest`,
 highest-version record per external ID. `PlainVectorIndex.search` scans the
 provided live IDs, applies the residual filter, and uses `TopK`.
 
-- **Step 4: Verify GREEN and commit**
+**Recorded activity 4 — Passing verification evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/index/test_plain.py`, `tests/contract/test_mutable_segment.py`.
 Historical expected evidence: PASS.
@@ -319,7 +319,7 @@ def test_upsert_delete_retrieve_and_search(tmp_path):
     assert collection.retrieve([1]) == ()
 ```
 
-- **Step 2: Verify RED**
+**Recorded activity 2 — Initial failure evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/contract/test_collection.py`, `tests/acceptance/test_exact_collection.py`.
 Historical expected evidence: imports or API calls fail.
@@ -331,7 +331,7 @@ applies them under one update lock, captures an immutable read view, and merges
 segment candidates. `Database` validates collection names and manages
 create/open/drop/close without a network adapter.
 
-- **Step 4: Verify GREEN and commit**
+**Recorded activity 4 — Passing verification evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/contract/test_collection.py`, `tests/acceptance/test_exact_collection.py`.
 Historical expected evidence: PASS.
@@ -371,7 +371,7 @@ def test_planner_boundaries(count, filtered, expected):
     assert planner.choose(facts(count, filtered)).strategy is expected
 ```
 
-- **Step 2: Verify RED**
+**Recorded activity 2 — Initial failure evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/query`.
 Historical expected evidence: imports fail.
@@ -383,7 +383,7 @@ entries for numeric ranges. Return `CandidateSet(ids, estimate)` only when the
 AST can be resolved exactly; otherwise return an estimate plus residual
 filter. Implement the five closed strategies and stable reason strings.
 
-- **Step 4: Verify exact plan parity and commit**
+**Recorded activity 4 — Plan-parity verification evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/query`.
 Historical expected evidence: PASS and indexed/unindexed exact searches agree.
@@ -414,19 +414,19 @@ def test_recall_improves_to_required_floor(dataset):
     assert recall >= 0.90
 ```
 
-- **Step 2: Verify RED**
+**Recorded activity 2 — Initial failure evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/index/test_hnsw_graph.py`, `tests/index/test_hnsw_search.py`.
 Historical expected evidence: HNSW is absent.
 
 **Recorded activity 3 — Design outcome: HNSW**
 
-Use stable point-ID bytes plus seed for level generation, bounded neighbor
+The design used stable point-ID bytes plus seed for level generation, bounded neighbor
 selection, bidirectional links, upper-level greedy descent, and level-zero
 best-first expansion. Track `visited_count` for labs. Traverse nonmatching
 nodes but only admit `allowed_ids` to results.
 
-- **Step 4: Verify invariants and recall**
+**Recorded activity 4 — Verify invariants and recall**
 
 Historical verification covered targeted or full test coverage, including `tests/index/test_hnsw_graph.py`, `tests/index/test_hnsw_search.py`, `tests/index/test_hnsw_recall.py`.
 Historical expected evidence: PASS with deterministic recall floor.
@@ -458,7 +458,7 @@ def test_delete_overlay_hides_immutable_hnsw_hit(collection):
     assert collection.search(SearchRequest((1, 0), 10)).hits == ()
 ```
 
-- **Step 2: Verify RED**
+**Recorded activity 2 — Initial failure evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/query/test_hnsw_plans.py`, `tests/acceptance/test_cross_segment_search.py`.
 Historical expected evidence: immutable flush path fails.
@@ -470,7 +470,7 @@ and optional HNSW. Search each segment with `limit + stale_id_budget`, merge by
 external ID and greatest version, honor the collection tombstone/version map,
 then exact-rescore and collect final Top-K.
 
-- **Step 4: Verify GREEN and commit**
+**Recorded activity 4 — Passing verification evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/query`, `tests/acceptance/test_cross_segment_search.py`.
 Historical expected evidence: PASS.
@@ -503,19 +503,19 @@ def test_incomplete_active_tail_is_truncated(tmp_path):
     assert [item.sequence for item in reopened.replay()] == [1, 2]
 ```
 
-- **Step 2: Verify RED**
+**Recorded activity 2 — Initial failure evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/storage/test_wal_codec.py`, `tests/reliability/test_wal_tail.py`.
 Historical expected evidence: persistence modules absent.
 
 **Recorded activity 3 — Design outcome: stable operation encoding**
 
-Use explicit tags, big-endian fixed-width integers, length-prefixed UTF-8/JSON
+The design used explicit tags, big-endian fixed-width integers, length-prefixed UTF-8/JSON
 payloads, canonical JSON separators and key ordering, frame version, and CRC32.
 `Wal.append` assigns strictly increasing sequences. Only the active incomplete
 tail is recoverably truncated; earlier corruption raises `CorruptionError`.
 
-- **Step 4: Verify durability policy and replay**
+**Recorded activity 4 — Verify durability policy and replay**
 
 Historical verification covered targeted or full test coverage, including `tests/storage/test_wal_codec.py`, `tests/reliability/test_wal_tail.py`, `tests/reliability/test_wal_replay.py`.
 Historical expected evidence: PASS.
@@ -546,19 +546,19 @@ def test_failed_current_swap_keeps_old_manifest(tmp_path, failure_gate):
     assert store.load_current().generation == 1
 ```
 
-- **Step 2: Verify RED**
+**Recorded activity 2 — Initial failure evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/storage/test_segment_codec.py`, `tests/storage/test_manifest.py`, `tests/reliability/test_manifest_publish.py`.
 Historical expected evidence: codec/store absent.
 
 **Recorded activity 3 — Design outcome: custom files and atomic publication**
 
-Write versioned checksummed `points.bin`, `payloads.bin`, `versions.bin`,
+Historical test and implementation coverage included versioned checksummed `points.bin`, `payloads.bin`, `versions.bin`,
 `deleted.bin`, `hnsw.bin`, `payload-indexes.bin`, and optional
 `quantized.bin`. Fsync files, temporary segment directory, manifest, and parent
 directory in order. Replace `CURRENT` only after all referenced files exist.
 
-- **Step 4: Verify GREEN and commit**
+**Recorded activity 4 — Passing verification evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/storage`, `tests/reliability/test_manifest_publish.py`.
 Historical expected evidence: PASS.
@@ -591,19 +591,19 @@ def test_crash_after_wal_before_apply_recovers_once(tmp_path, failure_gate):
     assert reopen(tmp_path).collection("items").count() == 1
 ```
 
-- **Step 2: Verify RED**
+**Recorded activity 2 — Initial failure evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/reliability/test_restart.py`, `tests/reliability/test_crash_boundaries.py`.
 Historical expected evidence: restart does not yet restore.
 
-- **Step 3: Wire mutation, flush, and startup**
+**Recorded activity 3 — Wire mutation, flush, and startup**
 
-Make WAL the source of operation versions. Flush freezes the appendable view,
+The design made WAL the source of operation versions. Flush freezes the appendable view,
 writes a plain immutable segment, publishes replay boundary, and then permits
 WAL truncation. Startup validates the root, reconstructs greatest versions,
 replays newer operations idempotently, and opens a fresh appendable segment.
 
-- **Step 4: Verify restart matrix and commit**
+**Recorded activity 4 — Verify restart matrix and commit**
 
 Historical verification covered targeted or full test coverage, including `tests/reliability`, `tests/acceptance/test_cross_restart.py`.
 Historical expected evidence: PASS for before/after WAL, segment write, manifest, and CURRENT gates.
@@ -643,7 +643,7 @@ def test_existing_view_can_finish_after_merge(collection):
     assert all(not path.exists() for path in old_paths)
 ```
 
-- **Step 2: Verify RED**
+**Recorded activity 2 — Initial failure evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/concurrency/test_online_optimize.py`, `tests/storage/test_merge.py`.
 Historical expected evidence: optimizer absent.
@@ -656,7 +656,7 @@ new manifest, then retire old paths through reference counts. Implement
 indexing, smallest-segment merge, deleted-ratio vacuum, and deterministic
 policy selection.
 
-- **Step 4: Verify failure and concurrency paths**
+**Recorded activity 4 — Verify failure and concurrency paths**
 
 Historical verification covered targeted or full test coverage, including `tests/concurrency`, `tests/storage/test_merge.py`, `tests/storage/test_vacuum.py`, `tests/reliability/test_optimizer_publish.py`.
 Historical expected evidence: PASS with no hidden late write or early deletion.
@@ -687,7 +687,7 @@ def test_rescore_uses_original_vectors(segment, queries):
         assert all(hit.score == exact_score(query, segment.vector(hit.id)) for hit in result)
 ```
 
-- **Step 2: Verify RED**
+**Recorded activity 2 — Initial failure evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/index/test_quantization.py`, `tests/query/test_quantized_rescore.py`.
 Historical expected evidence: quantization absent.
@@ -698,7 +698,7 @@ Store per-dimension minima and scales; constant dimensions use a zero code and
 zero scale. Use quantized vectors only for candidate scoring, oversample by a
 validated factor, fetch original floats, and exact-rescore final candidates.
 
-- **Step 4: Verify GREEN and commit**
+**Recorded activity 4 — Passing verification evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/index/test_quantization.py`, `tests/query/test_quantized_rescore.py`.
 Historical expected evidence: PASS with required recall floor.
@@ -731,7 +731,7 @@ def test_invalid_snapshot_never_replaces_live_collection(tmp_path):
     assert live.retrieve([1])
 ```
 
-- **Step 2: Verify RED**
+**Recorded activity 2 — Initial failure evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/reliability/test_snapshot.py`, `tests/reliability/test_snapshot_restore_failure.py`.
 Historical expected evidence: snapshot API absent.
@@ -743,7 +743,7 @@ files, include required WAL suffix, write checksums, fsync, and rename the
 temporary snapshot. Restore into a temporary collection, validate and open it,
 then atomically swap the directory.
 
-- **Step 4: Verify GREEN and commit**
+**Recorded activity 4 — Passing verification evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/reliability/test_snapshot.py`, `tests/reliability/test_snapshot_restore_failure.py`, `tests/acceptance/test_snapshot_roundtrip.py`.
 Historical expected evidence: PASS.
@@ -782,19 +782,19 @@ def test_close_is_idempotent_and_rejects_new_work(collection):
         collection.search(SearchRequest((1, 0), 1))
 ```
 
-- **Step 2: Verify RED**
+**Recorded activity 2 — Initial failure evidence**
 
 Historical verification covered targeted or full test coverage, including `tests/acceptance/test_cli.py`, `tests/contract/test_lifecycle.py`.
 Historical expected evidence: CLI/lifecycle behavior incomplete.
 
 **Recorded activity 3 — Design outcome: thin CLI and deterministic labs**
 
-Use `argparse`. All CLI commands call public `Database`/`Collection` methods.
+The design used `argparse`. All CLI commands call public `Database`/`Collection` methods.
 Labs print JSON metrics with fixed seeds and bounded fixtures. Document exact
 versus approximate behavior, acknowledgement boundaries, file formats, failure
 experiments, and every deliberate Qdrant difference.
 
-- **Step 4: Verify examples and docs**
+**Recorded activity 4 — Verify examples and docs**
 
 Historical verification covered targeted or full test coverage, including `tests/acceptance/test_cli.py`, `tests/acceptance/test_labs.py`, `tests/contract/test_lifecycle.py`.
 
@@ -838,9 +838,9 @@ Historical verification covered targeted or full test coverage, static analysis,
 
 Historical expected evidence: all commands exit 0.
 
-- **Step 4: Audit requirements against direct evidence**
+**Recorded activity 4 — Audit requirements against direct evidence**
 
-Update `docs/behavior-matrix.md` so every design goal and invariant names:
+The recorded change updated `docs/behavior-matrix.md` so every design goal and invariant names:
 
 ```text
 public API or module
@@ -853,7 +853,7 @@ Search for unsupported claims:
 
 Every retained claim must be scoped and proved by the matrix.
 
-- **Step 5: Verify clean final state and commit**
+**Recorded activity 5 — Final-state verification evidence**
 
 Historical verification covered targeted or full test coverage, static analysis, diff hygiene, repository-state inspection.
 

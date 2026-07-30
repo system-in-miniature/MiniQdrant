@@ -623,5 +623,5 @@ The project is complete only when:
 - README, architecture notes, format docs, behavior matrix, and labs match the
   implementation;
 - formatting, static checks, compilation, the full test suite, and
-  `git diff --check` pass from a clean checkout;
+  a whitespace-error check from a clean checkout;
 - the git worktree is clean and the completed implementation is committed.
