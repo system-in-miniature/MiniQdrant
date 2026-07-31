@@ -11,11 +11,13 @@ theme:
   favicon: assets/brand/avatar.svg
   language: en
   features:
+    - navigation.tabs
     - navigation.sections
     - navigation.top
     - content.code.copy
 
 nav:
+  - Home: index.md
   - English:
       - "Book Contents": tutorial/index.md
       - Tutorial:
@@ -30,7 +32,6 @@ nav:
           - "9 · Online Optimization": tutorial/09-optimizer.md
           - "10 · Snapshots and Methodology": tutorial/10-snapshots-methodology.md
       - Reference:
-          - "Quick Start": index.md
           - "Architecture": architecture.md
           - "Qdrant Mapping": qdrant-mapping.md
           - "Hands-on Labs": labs-guide.md
@@ -38,7 +39,7 @@ nav:
           - "Storage Format": storage-format.md
           - "Behavior Matrix": behavior-matrix.md
           - "Design History Archive": superpowers/README.md
-  - 中文版:
+  - 简体中文:
       - "全书目录": zh/tutorial/index.md
       - 教程:
           - "1 · 认识 MiniQdrant": zh/tutorial/01-getting-started.md
