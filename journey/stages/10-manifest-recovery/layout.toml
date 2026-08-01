@@ -1,0 +1,18 @@
+failure_files = ["tests/acceptance/test_cross_restart.py", "tests/reliability/test_crash_boundaries.py", "tests/reliability/test_manifest_publish.py", "tests/reliability/test_restart.py", "tests/storage/test_manifest.py", "tests/storage/test_segment_codec.py"]
+
+[[blocks]]
+id = "mechanism"
+title_en = "Manifest publication and recovery mechanism"
+title_zh = "Manifest 发布与恢复机制"
+summary_en = "restart opens one complete manifest generation then replays only the ordered WAL suffix not already represented by it."
+summary_zh = "重启只打开一个完整 Manifest Generation，再回放其中尚未表示的有序 WAL 后缀。"
+files = ["src/miniqdrant/collection.py", "src/miniqdrant/config.py", "src/miniqdrant/database.py", "src/miniqdrant/persistence/manifest.py", "src/miniqdrant/persistence/metadata.py", "src/miniqdrant/segment/codec.py", "src/miniqdrant/segment/immutable.py"]
+
+[[blocks]]
+id = "supporting"
+title_en = "Package, fixture, and project support"
+title_zh = "包、Fixture 与工程支撑"
+summary_en = "Keep exports, test corpora, dependencies, and the runtime environment reproducible."
+summary_zh = "保持包导出、测试语料、依赖与运行环境可复现。"
+files = ["src/miniqdrant/__init__.py", "src/miniqdrant/persistence/__init__.py"]
+supporting = true

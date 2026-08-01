@@ -1,0 +1,18 @@
+failure_files = ["tests/concurrency/test_online_optimize.py", "tests/reliability/test_optimizer_publish.py", "tests/storage/test_merge.py", "tests/storage/test_vacuum.py", "tests/unit/test_optimizer_policy.py"]
+
+[[blocks]]
+id = "mechanism"
+title_en = "Online segment optimization mechanism"
+title_zh = "在线 Segment 优化机制"
+summary_en = "optimization builds privately, validates its inputs are still current, then atomically swaps references while old readers finish."
+summary_zh = "Optimization 私下构建，确认输入仍是当前版本，再原子替换 Reference，同时允许旧 Reader 完成。"
+files = ["src/miniqdrant/collection.py", "src/miniqdrant/optimizer/failures.py", "src/miniqdrant/optimizer/optimizer.py", "src/miniqdrant/optimizer/policy.py", "src/miniqdrant/segment/immutable.py", "src/miniqdrant/segment/references.py"]
+
+[[blocks]]
+id = "supporting"
+title_en = "Package, fixture, and project support"
+title_zh = "包、Fixture 与工程支撑"
+summary_en = "Keep exports, test corpora, dependencies, and the runtime environment reproducible."
+summary_zh = "保持包导出、测试语料、依赖与运行环境可复现。"
+files = ["src/miniqdrant/optimizer/__init__.py"]
+supporting = true

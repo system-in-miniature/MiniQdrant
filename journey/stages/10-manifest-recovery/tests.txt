@@ -1,0 +1,6 @@
+tests/acceptance/test_cross_restart.py
+tests/reliability/test_crash_boundaries.py
+tests/reliability/test_manifest_publish.py
+tests/reliability/test_restart.py
+tests/storage/test_manifest.py
+tests/storage/test_segment_codec.py

@@ -9,6 +9,14 @@ MiniQdrant 是一个直接 API 优先的 Python 参考实现，覆盖过滤向�
 English summary: MiniQdrant makes single-node vector database mechanisms
 inspectable without claiming Qdrant API or deployment compatibility.
 
+## 学习模式
+
+- **机制教程**：按[十章教程](tutorial/index.md)从概念与运行时路径理解各项机制。
+- **自主重建**：进入[十五阶段重建旅程](journey/index.md)，依次阅读当前问题、测试契约、
+  基本概念与按机制分组的代码差异。
+- **Agent 带教**：按照 [CLI 使用教程](agent-guide.md)，让 Codex 互动讲解、实现并
+  验收一个 Stage。
+
 ## 安装
 
 ```bash

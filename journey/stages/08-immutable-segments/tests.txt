@@ -1,0 +1,2 @@
+tests/acceptance/test_cross_segment_search.py
+tests/query/test_hnsw_plans.py

@@ -1,0 +1,521 @@
+diff --git a/pyproject.toml b/pyproject.toml
+index 972a6ac4333f0d302fedebca9a8b04771816320b..fdf9c03e85585ccdacd58f85f9966a2162421a17 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -29,7 +29,7 @@ testpaths = ["tests"]
+ [tool.ruff]
+ target-version = "py312"
+ line-length = 100
++exclude = ["journey"]
+ 
+ [tool.ruff.lint]
+ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+-
+diff --git a/src/miniqdrant/index/hnsw.py b/src/miniqdrant/index/hnsw.py
+index e77782e4b3edf44bff6d3943b039f59cca92c160..79531a5ea3e86b89bc6f7a35d19242f2455ce947 100644
+--- a/src/miniqdrant/index/hnsw.py
++++ b/src/miniqdrant/index/hnsw.py
+@@ -1,3 +1,10 @@
++"""Deterministic, inspectable HNSW construction and candidate search.
++
++The implementation keeps the recognizable HNSW layer/entry-point algorithm,
++but favors reproducibility over production recall and latency behavior.  In
++particular, disconnected components are searched by non-standard restarts.
++"""
++
+ from __future__ import annotations
+ 
+ import hashlib
+@@ -47,6 +54,9 @@ class HnswIndex:
+         }
+         self._entry_point: PointId | None = None
+         self._max_level = -1
++        # HNSW is a hierarchy of increasingly sparse proximity graphs.  Most
++        # points live only at layer 0; the deterministic geometric-like level
++        # assignment promotes a shrinking subset to act as long-range routes.
+         for point in ordered:
+             self._insert(point.id)
+ 
+@@ -99,11 +109,18 @@ class HnswIndex:
+         breadth = max(limit, ef_search or self._config.ef_search)
+         entry = self._entry_point
+         visited: set[PointId] = {entry}
++        # Descend through sparse upper layers greedily.  The closest point found
++        # at one layer becomes the entry point for the denser layer below.
+         for layer in range(self._max_level, 0, -1):
+             entry, layer_visited = self._greedy(normalized, entry, layer)
+             visited.update(layer_visited)
+         scores, layer_visited = self._search_layer(normalized, (entry,), breadth, 0)
+         visited.update(layer_visited)
++        # This restart loop is deliberately *not* standard HNSW.  It visits the
++        # smallest-id unvisited component until `breadth` candidates exist,
++        # making disconnected graphs easier to inspect and recall tests less
++        # brittle.  When components are small (or ef is large), it can restart
++        # repeatedly and turn an approximate graph search into a full scan.
+         while len(scores) < breadth and len(visited) < len(self._vectors):
+             next_entry = min(
+                 self._vectors.keys() - visited,
+@@ -142,6 +159,8 @@ class HnswIndex:
+ 
+         entry = self._entry_point
+         vector = self._vectors[point_id]
++        # New points first use upper layers only for navigation; connections
++        # are created once the descent reaches a layer occupied by the point.
+         for layer in range(self._max_level, level, -1):
+             entry, _ = self._greedy(vector, entry, layer)
+         for layer in range(min(level, self._max_level), -1, -1):
+@@ -218,6 +237,9 @@ class HnswIndex:
+             negative_score, _, current = heapq.heappop(frontier)
+             current_score = -negative_score
+             best = _best_ids(best, scores, breadth)
++            # `best` is the ef-sized convergence window.  Because the frontier
++            # is ordered best-first, once its next candidate is worse than the
++            # window's worst member, no queued expansion can improve the set.
+             if len(best) >= breadth and current_score < scores[best[-1]]:
+                 break
+             for neighbor in self._layers.get(layer, {}).get(current, ()):
+@@ -238,6 +260,10 @@ class HnswIndex:
+         neighbors = self._layers[layer][point_id]
+         if len(neighbors) <= self._config.m:
+             return
++        # Keep the m closest neighbors (with stable ID tie-breaking) and remove
++        # reverse edges too.  Production HNSW commonly uses a diversity-aware
++        # heuristic; this nearest-only rule is smaller and deterministic but
++        # can create less navigable clusters and disconnected components.
+         retained = set(
+             sorted(
+                 neighbors,
+diff --git a/src/miniqdrant/labs/filtering.py b/src/miniqdrant/labs/filtering.py
+index b3670c9134f85b1bdd9e9ef9336db295acb8300e..957f8a36dae8c468f806fe40c4a06b5d1312e454 100644
+--- a/src/miniqdrant/labs/filtering.py
++++ b/src/miniqdrant/labs/filtering.py
+@@ -1,5 +1,12 @@
++"""Public API lab: observe payload filtering and the selected search plan.
++
++The experiment uses only symbols exported by ``miniqdrant``. It demonstrates
++the filtering mechanism without reaching into planner or segment internals.
++"""
++
+ from __future__ import annotations
+ 
++import tempfile
+ from pathlib import Path
+ 
+ from miniqdrant import Database, Distance, Filter, Match, PayloadSchema, Point, SearchRequest
+@@ -31,3 +38,20 @@ def run_filtering_lab(path: str | Path) -> dict[str, object]:
+         return {"matching_ids": [hit.id for hit in result.hits], "plan": result.plan}
+     finally:
+         database.close()
++
++
++def main() -> None:
++    with tempfile.TemporaryDirectory(prefix="miniqdrant-filtering-") as path:
++        result = run_filtering_lab(path)
++
++    print("Filtering lab: query=(1.0, 0.0), tenant='a', limit=10")
++    print(f"Matching ids: {result['matching_ids']}")
++    print(f"Selected plan: {result['plan']}")
++    print()
++    print("Interpretation:")
++    print("- point 2 is vector-similar but excluded because its tenant is 'b'.")
++    print("- the payload index lets the public collection API plan a filtered search.")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/src/miniqdrant/labs/plan_comparison.py b/src/miniqdrant/labs/plan_comparison.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..536a7c3350824883fac8fdb5babf8a00873f864b
+--- /dev/null
++++ b/src/miniqdrant/labs/plan_comparison.py
+@@ -0,0 +1,135 @@
++"""Compare the work and output of MiniQdrant's four teaching search plans.
++
++Collection-level ``SearchResult.plan`` exposes these same strategy names but
++does not retain visit counts. This lab calls the per-segment search boundary so
++it can show both the plan and its strategy-specific ``visited_count``.
++"""
++
++from __future__ import annotations
++
++import math
++
++from miniqdrant.config import (
++    CollectionConfig,
++    Distance,
++    HnswConfig,
++    OptimizerConfig,
++    ScalarQuantizationConfig,
++)
++from miniqdrant.filters import Filter, Match
++from miniqdrant.filters.index import PayloadSchema
++from miniqdrant.models import Point, StoredPoint, validate_point
++from miniqdrant.segment import ImmutableSegment, SegmentSearchRequest
++
++
++def run_plan_comparison_lab(*, points: int = 64) -> tuple[dict[str, object], ...]:
++    """Run one query through exact, HNSW, filtered-HNSW, and quantized plans."""
++    if points < 8:
++        raise ValueError("plan comparison requires at least 8 points")
++
++    base_config = CollectionConfig(
++        dimension=2,
++        distance=Distance.DOT,
++        hnsw=HnswConfig(m=8, ef_construct=32, ef_search=16, seed=19),
++        optimizer=OptimizerConfig(indexing_threshold_points=1),
++    )
++    records = _circle_records(points, base_config)
++    indexed = ImmutableSegment.build(
++        base_config,
++        records,
++        payload_schemas={"cohort": PayloadSchema.KEYWORD},
++        indexed=True,
++    )
++    quantized_config = CollectionConfig(
++        dimension=base_config.dimension,
++        distance=base_config.distance,
++        hnsw=base_config.hnsw,
++        optimizer=base_config.optimizer,
++        quantization=ScalarQuantizationConfig(oversampling=4),
++    )
++    quantized = ImmutableSegment.build(
++        quantized_config,
++        records,
++        payload_schemas={"cohort": PayloadSchema.KEYWORD},
++        indexed=True,
++    )
++
++    query = (1.0, 0.0)
++    requests = (
++        ("exact", indexed, SegmentSearchRequest(query, 5, exact=True)),
++        ("hnsw", indexed, SegmentSearchRequest(query, 5)),
++        (
++            "filtered",
++            indexed,
++            SegmentSearchRequest(
++                query,
++                5,
++                filter=Filter(must=(Match("cohort", "even"),)),
++            ),
++        ),
++        ("quantized", quantized, SegmentSearchRequest(query, 5)),
++    )
++    rows: list[dict[str, object]] = []
++    for label, segment, request in requests:
++        result = segment.search(request)
++        rows.append(
++            {
++                "label": label,
++                "plan": result.strategy,
++                "ids": tuple(candidate.point_id for candidate in result.candidates),
++                "scores": tuple(
++                    round(candidate.score, 6) for candidate in result.candidates
++                ),
++                "visited_count": result.visited_count,
++            }
++        )
++    return tuple(rows)
++
++
++def _circle_records(
++    count: int,
++    config: CollectionConfig,
++) -> tuple[StoredPoint, ...]:
++    records = []
++    for point_id in range(count):
++        angle = 2.0 * math.pi * point_id / count
++        record = validate_point(
++            Point(
++                point_id,
++                (math.cos(angle), math.sin(angle)),
++                {"cohort": "even" if point_id % 2 == 0 else "odd"},
++            ),
++            config,
++        )
++        records.append(
++            StoredPoint(
++                record.id,
++                record.vector,
++                record.payload,
++                version=1,
++            )
++        )
++    return tuple(records)
++
++
++def main() -> None:
++    print("Same query: vector=(1.0, 0.0), limit=5")
++    print(
++        "`visited_count` is the plan-specific work counter: scored eligible "
++        "vectors or unique graph nodes."
++    )
++    for row in run_plan_comparison_lab():
++        print(
++            f"{row['label']:>9} | plan={row['plan']:<24} "
++            f"| visited={row['visited_count']:>3} | ids={row['ids']}"
++        )
++    print()
++    print("Interpretation:")
++    print("- exact visits every eligible vector; HNSW follows the graph.")
++    print("- filtered-HNSW traverses first and filters an oversampled candidate set.")
++    print("- the quantized plan scans decoded int8 codes, then float-rescores candidates.")
++    print("- plan names describe planner branches; see DIFFERENCES_FROM_QDRANT.md.")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/src/miniqdrant/labs/recall.py b/src/miniqdrant/labs/recall.py
+index dab6043891c577d1504487b078a7010dae9a745d..d5f5edfb1e2426d82be8fccab97dda96307b7493 100644
+--- a/src/miniqdrant/labs/recall.py
++++ b/src/miniqdrant/labs/recall.py
+@@ -1,3 +1,10 @@
++"""Mechanism lab: compare HNSW candidates with exact segment search.
++
++This experiment deliberately calls ``ImmutableSegment.search`` and
++``SegmentSearchRequest`` directly so approximate and exact execution can be
++compared at the internal per-segment mechanism boundary.
++"""
++
+ from __future__ import annotations
+ 
+ import random
+@@ -56,3 +63,22 @@ def run_recall_lab(
+         "recall_at_5": sum(recalls) / max(1, len(recalls)),
+         "seed": seed,
+     }
++
++
++def main() -> None:
++    result = run_recall_lab(seed=11, points=80, queries=5)
++
++    print(
++        "Recall lab: "
++        f"seed={result['seed']}, points={result['points']}, queries={result['queries']}"
++    )
++    print(f"Mean recall@5: {result['recall_at_5']:.3f}")
++    print()
++    print("Interpretation:")
++    print("- exact search supplies the top-5 reference set for each query.")
++    print("- recall@5 is the fraction of those ids also returned by internal HNSW search.")
++    print("- the fixed seed makes this mechanism experiment reproducible.")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/src/miniqdrant/labs/recovery.py b/src/miniqdrant/labs/recovery.py
+index 8780af9acefacf0bfee1c7d16e2847d4a007cc0f..22e9292edcd8ee3c416a3e720807c14c9efb3f60 100644
+--- a/src/miniqdrant/labs/recovery.py
++++ b/src/miniqdrant/labs/recovery.py
+@@ -1,5 +1,12 @@
++"""Public API lab: persist a collection, close it, and recover it after reopen.
++
++The experiment stays on the exported ``Database`` and ``Collection`` API. WAL,
++manifest, and segment recovery happen behind that public lifecycle boundary.
++"""
++
+ from __future__ import annotations
+ 
++import tempfile
+ from pathlib import Path
+ 
+ from miniqdrant import Database, Distance, Point
+@@ -27,3 +34,19 @@ def run_recovery_lab(path: str | Path) -> dict[str, object]:
+         return {"restored_ids": [point.id for point in restored]}
+     finally:
+         reopened.close()
++
++
++def main() -> None:
++    with tempfile.TemporaryDirectory(prefix="miniqdrant-recovery-") as path:
++        result = run_recovery_lab(path)
++
++    print("Recovery lab: upsert ids 1 and 2, flush, close, then reopen")
++    print(f"Restored ids: {result['restored_ids']}")
++    print()
++    print("Interpretation:")
++    print("- close/reopen creates a real process-lifecycle recovery boundary.")
++    print("- both ids remain visible after metadata and segment state are reloaded.")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/src/miniqdrant/labs/segments.py b/src/miniqdrant/labs/segments.py
+index 0295230a7ab7aacc77da7f78262799a1b7fcb6f5..24d751be98f7e72946df4ad54510ceeb62873e15 100644
+--- a/src/miniqdrant/labs/segments.py
++++ b/src/miniqdrant/labs/segments.py
+@@ -1,5 +1,13 @@
++"""Public API lab: observe immutable segment creation and compaction.
++
++The experiment uses exported ``Database`` and ``Collection`` operations.
++``segment_statistics`` exposes the mechanism's shape without directly
++constructing or mutating internal segment objects.
++"""
++
+ from __future__ import annotations
+ 
++import tempfile
+ from pathlib import Path
+ 
+ from miniqdrant import Database, Distance, Point
+@@ -23,3 +31,20 @@ def run_segments_lab(path: str | Path) -> dict[str, int]:
+         return {"before_segments": before, "after_segments": after}
+     finally:
+         database.close()
++
++
++def main() -> None:
++    with tempfile.TemporaryDirectory(prefix="miniqdrant-segments-") as path:
++        result = run_segments_lab(path)
++
++    print("Segments lab: two upsert+flush rounds followed by optimize")
++    print(f"Segments before optimize: {result['before_segments']}")
++    print(f"Segments after optimize: {result['after_segments']}")
++    print()
++    print("Interpretation:")
++    print("- each flush publishes an immutable segment, so the count first reaches two.")
++    print("- optimize compacts those segments into one while preserving collection contents.")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/src/miniqdrant/persistence/frame.py b/src/miniqdrant/persistence/frame.py
+index e56facd7205cf19f40532010d4d33fe3be7d67ad..fb581655c9108b45f9be9b6f904ce5f241893ee3 100644
+--- a/src/miniqdrant/persistence/frame.py
++++ b/src/miniqdrant/persistence/frame.py
+@@ -1,3 +1,10 @@
++"""Checksummed WAL framing with narrowly scoped torn-tail recovery.
++
++Only an incomplete or checksum-bad final frame is repairable: it can be the
++residue of a crash during append.  Earlier corruption is rejected because
++truncating it would silently discard a later, apparently durable history.
++"""
++
+ from __future__ import annotations
+ 
+ import os
+@@ -24,6 +31,8 @@ class DecodedFrame:
+ 
+ 
+ def encode_frame(sequence: int, kind: int, payload: bytes) -> bytes:
++    # The checksum covers sequence and operation kind as well as the payload,
++    # so a torn or corrupted header/body cannot be replayed under new metadata.
+     body = _BODY_PREFIX.pack(sequence, kind) + payload
+     checksum = zlib.crc32(body)
+     return _HEADER.pack(MAGIC, FORMAT_VERSION, len(body)) + body + _CRC.pack(checksum)
+@@ -49,6 +58,8 @@ def scan_frames(path: Path, *, repair_tail: bool) -> tuple[DecodedFrame, ...]:
+         expected_crc = _CRC.unpack_from(data, offset + body_length)[0]
+         actual_crc = zlib.crc32(body)
+         if expected_crc != actual_crc:
++            # A bad checksum is crash-repairable only when this frame reaches
++            # EOF.  A bad interior frame indicates durable-history corruption.
+             if repair_tail and frame_end == len(data):
+                 _truncate(path, last_valid)
+                 return tuple(frames)
+@@ -81,5 +92,6 @@ def _truncate(path: Path, size: int) -> None:
+     with path.open("r+b") as stream:
+         stream.truncate(size)
+         stream.flush()
++        # Persist the repaired length before replay continues; otherwise a
++        # second crash could expose the torn bytes again.
+         os.fsync(stream.fileno())
+-
+diff --git a/src/miniqdrant/persistence/manifest.py b/src/miniqdrant/persistence/manifest.py
+index 711d424a19f2f95d8b99581d574c04a7e51f24bc..64ced8bb9054a440294fa4aff6efcb7af7e592db 100644
+--- a/src/miniqdrant/persistence/manifest.py
++++ b/src/miniqdrant/persistence/manifest.py
+@@ -1,3 +1,10 @@
++"""Checksummed manifests and atomic CURRENT-pointer publication.
++
++A new immutable state becomes restart-visible only after its manifest is
++durable and `CURRENT` is atomically replaced.  Thus a crash selects either the
++old complete generation or the new complete generation, never a mixed list.
++"""
++
+ from __future__ import annotations
+ 
+ import hashlib
+@@ -55,6 +62,8 @@ class ManifestStore:
+         target = self._path / manifest.filename
+         payload = _encode_manifest(manifest)
+         temporary = target.with_suffix(".json.tmp")
++        # Publish the immutable, checksummed generation before changing the
++        # root pointer.  Directory fsync makes the rename durable.
+         _write_fsynced(temporary, payload)
+         os.replace(temporary, target)
+         fsync_directory(self._path)
+@@ -62,6 +71,8 @@ class ManifestStore:
+         current_temporary = self._path / "CURRENT.tmp"
+         _write_fsynced(current_temporary, f"{manifest.filename}\n".encode())
+         self._failure_injector("before_current_replace")
++        # CURRENT is the single commit point.  Readers after restart observe
++        # either its previous filename or this fully written generation.
+         os.replace(current_temporary, self._path / "CURRENT")
+         fsync_directory(self._path)
+ 
+diff --git a/src/miniqdrant/persistence/wal.py b/src/miniqdrant/persistence/wal.py
+index 2f633d2130ebc5e2310bfdf4461015bd1242fb53..cd77991a2f36bd629a5f154e5a9ef33c096da282 100644
+--- a/src/miniqdrant/persistence/wal.py
++++ b/src/miniqdrant/persistence/wal.py
+@@ -1,3 +1,10 @@
++"""Single-file write-ahead log and replay contract for collection mutations.
++
++Frames are appended before mutations reach the mutable segment.  The manifest
++replay boundary makes recovery idempotent, but this teaching WAL does not yet
++rotate or reclaim frames covered by published segments.
++"""
++
+ from __future__ import annotations
+ 
+ import json
+@@ -207,4 +214,3 @@ def _validate_sequences(frames: tuple[DecodedFrame, ...]) -> None:
+                 f"WAL sequence mismatch: expected {expected}, got {frame.sequence}"
+             )
+         expected += 1
+-
+diff --git a/tests/acceptance/test_labs.py b/tests/acceptance/test_labs.py
+index 92196daffab0e20836fdc797c4f521eb3e1e6c7e..0dd4a592496418236d1390136031ef14ce8f5fc9 100644
+--- a/tests/acceptance/test_labs.py
++++ b/tests/acceptance/test_labs.py
+@@ -1,11 +1,42 @@
+ from __future__ import annotations
+ 
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++
+ from miniqdrant.labs.filtering import run_filtering_lab
+ from miniqdrant.labs.recall import run_recall_lab
+ from miniqdrant.labs.recovery import run_recovery_lab
+ from miniqdrant.labs.segments import run_segments_lab
+ 
+ 
++@pytest.mark.parametrize(
++    ("script", "expected_output"),
++    [
++        ("filtering.py", "matching ids"),
++        ("recall.py", "recall@5"),
++        ("recovery.py", "restored ids"),
++        ("segments.py", "segments after optimize"),
++    ],
++)
++def test_lab_script_runs_experiment_body(script: str, expected_output: str) -> None:
++    repository = Path(__file__).parents[2]
++    completed = subprocess.run(
++        [
++            sys.executable,
++            str(repository / "src" / "miniqdrant" / "labs" / script),
++        ],
++        cwd=repository,
++        check=True,
++        capture_output=True,
++        text=True,
++    )
++
++    assert expected_output in completed.stdout.lower()
++
++
+ def test_labs_are_deterministic_and_report_the_mechanism(tmp_path) -> None:
+     first = run_recall_lab(seed=11, points=80, queries=5)
+     second = run_recall_lab(seed=11, points=80, queries=5)

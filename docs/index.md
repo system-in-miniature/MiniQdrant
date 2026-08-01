@@ -11,6 +11,28 @@ MiniQdrant 是一个直接 API 优先的 Python 参考实现，覆盖过滤向�
 不可变分段、在线优化与持久恢复。它揭示单节点向量数据库的机制，不复刻 Qdrant
 的网络 API 或分布式部署表面。
 
+## Learning modes / 学习模式
+
+### Mechanism Tutorial / 机制教程
+
+Use the existing ten chapters to build a topic-oriented mental model of points,
+segments, HNSW, filtering, planning, WAL, optimization, quantization, and
+snapshots. / 希望先按主题建立 Point、Segment、HNSW、过滤、规划、WAL、优化、量化与
+Snapshot 的心智模型时，使用现有十章教程。
+
+### Self-Guided Rebuild / 自主重建
+
+Use the [fifteen-stage Journey](journey/index.md) to understand each problem,
+test contract, concept boundary, and grouped code diff in a browser. / 使用
+[十五阶段重建旅程](zh/journey/index.md)，在浏览器中理解每个问题、测试契约、概念边界
+与按机制分组的代码差异。
+
+### Agent-Guided Rebuild / Agent 带教
+
+Use the [CLI guide](agent-guide.md) when you want Codex to interactively teach,
+implement, and verify one Stage. / 希望由 Codex 互动讲解、实现并验收一个 Stage 时，
+查看 [CLI 使用教程](zh/agent-guide.md)。
+
 ## Install / 安装
 
 ```bash

@@ -19,8 +19,8 @@ theme:
 nav:
   - Home: index.md
   - English:
-      - "Book Contents": tutorial/index.md
-      - Tutorial:
+      - Mechanism Tutorial:
+          - "Book Contents": tutorial/index.md
           - "1 · Meet MiniQdrant": tutorial/01-getting-started.md
           - "2 · Points, Payloads, and Distance": tutorial/02-points-payload.md
           - "3 · WAL and Manifest Publication": tutorial/03-wal-manifest.md
@@ -31,6 +31,25 @@ nav:
           - "8 · Quantization": tutorial/08-quantization.md
           - "9 · Online Optimization": tutorial/09-optimizer.md
           - "10 · Snapshots and Methodology": tutorial/10-snapshots-methodology.md
+      - Self-Guided Rebuild:
+          - "Build MiniQdrant yourself": journey/index.md
+          - "01 · Domain contracts": journey/stage-01.md
+          - "02 · Distance scoring and top-k": journey/stage-02.md
+          - "03 · Structured payload filters": journey/stage-03.md
+          - "04 · Exact mutable segments": journey/stage-04.md
+          - "05 · Collection operations": journey/stage-05.md
+          - "06 · Filter-aware query planning": journey/stage-06.md
+          - "07 · Deterministic HNSW search": journey/stage-07.md
+          - "08 · Versioned immutable segments": journey/stage-08.md
+          - "09 · Framed write-ahead logging": journey/stage-09.md
+          - "10 · Manifest publication and recovery": journey/stage-10.md
+          - "11 · Online segment optimization": journey/stage-11.md
+          - "12 · Quantized candidate rescoring": journey/stage-12.md
+          - "13 · Atomic snapshot and restore": journey/stage-13.md
+          - "14 · Concurrency and acceptance closure": journey/stage-14.md
+          - "15 · Executable vector-search labs": journey/stage-15.md
+      - Agent-Guided Rebuild:
+          - "CLI usage": agent-guide.md
       - Reference:
           - "Architecture": architecture.md
           - "Qdrant Mapping": qdrant-mapping.md
@@ -40,8 +59,8 @@ nav:
           - "Behavior Matrix": behavior-matrix.md
           - "Design History Archive": superpowers/README.md
   - 简体中文:
-      - "全书目录": zh/tutorial/index.md
-      - 教程:
+      - 机制教程:
+          - "全书目录": zh/tutorial/index.md
           - "1 · 认识 MiniQdrant": zh/tutorial/01-getting-started.md
           - "2 · 点与负载": zh/tutorial/02-points-payload.md
           - "3 · WAL 与清单": zh/tutorial/03-wal-manifest.md
@@ -52,6 +71,25 @@ nav:
           - "8 · 量化": zh/tutorial/08-quantization.md
           - "9 · 在线优化": zh/tutorial/09-optimizer.md
           - "10 · 快照与方法论": zh/tutorial/10-snapshots-methodology.md
+      - 自主重建:
+          - "从零构建 MiniQdrant": zh/journey/index.md
+          - "01 · 领域契约": zh/journey/stage-01.md
+          - "02 · 距离评分与 Top-k": zh/journey/stage-02.md
+          - "03 · 结构化 Payload 过滤": zh/journey/stage-03.md
+          - "04 · 精确可变 Segment": zh/journey/stage-04.md
+          - "05 · Collection 操作闭环": zh/journey/stage-05.md
+          - "06 · 过滤感知查询规划": zh/journey/stage-06.md
+          - "07 · 确定性 HNSW 搜索": zh/journey/stage-07.md
+          - "08 · 版本化不可变 Segment": zh/journey/stage-08.md
+          - "09 · 分帧预写日志": zh/journey/stage-09.md
+          - "10 · Manifest 发布与恢复": zh/journey/stage-10.md
+          - "11 · 在线 Segment 优化": zh/journey/stage-11.md
+          - "12 · 量化候选精排": zh/journey/stage-12.md
+          - "13 · 原子 Snapshot 与 Restore": zh/journey/stage-13.md
+          - "14 · 并发与验收闭环": zh/journey/stage-14.md
+          - "15 · 可执行向量搜索实验": zh/journey/stage-15.md
+      - Agent 带教:
+          - "CLI 使用教程": zh/agent-guide.md
       - 参考资料:
           - "快速开始": zh/index.md
           - "架构总览": zh/ARCHITECTURE.md
@@ -70,3 +108,6 @@ markdown_extensions:
   - pymdownx.superfences
 
 strict: true
+
+extra_javascript:
+  - assets/javascripts/language-switch.js

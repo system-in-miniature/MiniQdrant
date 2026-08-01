@@ -1,0 +1,3 @@
+tests/reliability/test_wal_replay.py
+tests/reliability/test_wal_tail.py
+tests/storage/test_wal_codec.py

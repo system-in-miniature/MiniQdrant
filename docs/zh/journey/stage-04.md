@@ -1,0 +1,500 @@
+# Stage 04 · 精确可变 Segment
+
+### 目标
+
+实现精确可变 Segment，并能从可执行反例、运行时状态与关键语句解释其边界。
+
+??? note "交付文件"
+    - `src/miniqdrant/__init__.py`
+    - `src/miniqdrant/index/__init__.py`
+    - `src/miniqdrant/index/plain.py`
+    - `src/miniqdrant/segment/__init__.py`
+    - `src/miniqdrant/segment/base.py`
+    - `src/miniqdrant/segment/mutable.py`
+    - `tests/contract/test_mutable_segment.py`
+    - `tests/index/test_plain.py`
+
+### 当前遇到的问题
+
+新 Point 需要受控的内存 Segment，统一协调替换、删除、过滤与精确向量检索。
+
+### 测试契约
+
+#### 先看会坏在哪里
+
+聚焦测试让精确可变 Segment经历正常路径、边界值、非法输入与本 Stage 可观察的失败边界。
+
+??? note "文件差异：tests/contract/test_mutable_segment.py"
+    ```diff
+    diff --git a/tests/contract/test_mutable_segment.py b/tests/contract/test_mutable_segment.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..40346fe6f1f3678f89d85dd63e04dc1424a2eeca
+    --- /dev/null
+    +++ b/tests/contract/test_mutable_segment.py
+    @@ -0,0 +1,58 @@
+    +from __future__ import annotations
+    +
+    +from miniqdrant.config import CollectionConfig, Distance
+    +from miniqdrant.filters import Filter, Match
+    +from miniqdrant.models import Point
+    +from miniqdrant.segment import MutableSegment, SegmentSearchRequest
+    +
+    +
+    +def config() -> CollectionConfig:
+    +    return CollectionConfig(dimension=2, distance=Distance.DOT)
+    +
+    +
+    +def test_exact_search_obeys_filter_and_topk() -> None:
+    +    segment = MutableSegment(config())
+    +    segment.apply_upsert(Point(1, (1.0, 0.0), {"kind": "book"}), version=1)
+    +    segment.apply_upsert(Point(2, (0.9, 0.1), {"kind": "movie"}), version=2)
+    +    segment.apply_upsert(Point(3, (0.8, 0.2), {"kind": "book"}), version=3)
+    +
+    +    hits = segment.search(
+    +        SegmentSearchRequest(
+    +            vector=(1.0, 0.0),
+    +            limit=1,
+    +            filter=Filter(must=(Match("kind", "book"),)),
+    +            exact=True,
+    +        )
+    +    )
+    +
+    +    assert [(hit.point_id, hit.version) for hit in hits.candidates] == [(1, 1)]
+    +
+    +
+    +def test_stale_version_cannot_resurrect_deleted_point() -> None:
+    +    segment = MutableSegment(config())
+    +    assert segment.apply_upsert(Point(1, (1.0, 0.0), {}), version=4)
+    +    assert segment.apply_delete(1, version=5)
+    +
+    +    assert not segment.apply_upsert(Point(1, (0.0, 1.0), {}), version=3)
+    +    assert segment.get(1) is None
+    +    assert segment.version_of(1) == 5
+    +
+    +
+    +def test_equal_version_is_idempotently_ignored() -> None:
+    +    segment = MutableSegment(config())
+    +
+    +    assert segment.apply_upsert(Point(1, (1.0, 0.0), {"value": "first"}), version=7)
+    +    assert not segment.apply_upsert(Point(1, (0.0, 1.0), {"value": "second"}), version=7)
+    +
+    +    assert segment.get(1).payload["value"] == "first"
+    +
+    +
+    +def test_delete_of_missing_point_creates_tombstone() -> None:
+    +    segment = MutableSegment(config())
+    +
+    +    assert segment.apply_delete(99, version=3)
+    +
+    +    assert segment.get(99) is None
+    +    assert segment.version_of(99) == 3
+    +    assert segment.live_count == 0
+    +
+    ```
+
+**测试锁定什么**
+
+这些测试锁定本 Stage 的正常路径、边界条件、失败可见性与恢复不变量。
+
+**如何构造反例**
+
+聚焦测试让精确可变 Segment经历正常路径、边界值、非法输入与本 Stage 可观察的失败边界。
+
+**关键测试语句**
+
+```python
+assert [(hit.point_id, hit.version) for hit in hits.candidates] == [(1, 1)]
+```
+
+这条断言把可观察结果与本 Stage 的状态、可见性或持久性边界绑定，而不只检查调用返回。
+
+**失败意味着什么**
+
+失败说明实现跨越了刚建立的语义、顺序、所有权或恢复边界。
+
+??? note "文件差异：tests/index/test_plain.py"
+    ```diff
+    diff --git a/tests/index/test_plain.py b/tests/index/test_plain.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..b7d229433a553bab4853128b410aff040dd4387f
+    --- /dev/null
+    +++ b/tests/index/test_plain.py
+    @@ -0,0 +1,42 @@
+    +from __future__ import annotations
+    +
+    +from miniqdrant.config import CollectionConfig, Distance
+    +from miniqdrant.filters import Filter, Match
+    +from miniqdrant.index.plain import PlainVectorIndex
+    +from miniqdrant.models import Point, validate_point
+    +
+    +
+    +def test_plain_index_returns_exact_filtered_topk() -> None:
+    +    config = CollectionConfig(dimension=2, distance=Distance.DOT)
+    +    points = [
+    +        validate_point(Point(1, (1.0, 0.0), {"kind": "book"}), config),
+    +        validate_point(Point(2, (0.9, 0.1), {"kind": "movie"}), config),
+    +        validate_point(Point(3, (0.8, 0.2), {"kind": "book"}), config),
+    +    ]
+    +    index = PlainVectorIndex(config.distance, points)
+    +
+    +    candidates = index.search(
+    +        query=(1.0, 0.0),
+    +        limit=2,
+    +        filter_=Filter(must=(Match("kind", "book"),)),
+    +    )
+    +
+    +    assert [(item.point_id, item.score) for item in candidates] == [
+    +        (1, 1.0),
+    +        (3, 0.8),
+    +    ]
+    +
+    +
+    +def test_plain_index_reports_visited_points() -> None:
+    +    config = CollectionConfig(dimension=2, distance=Distance.DOT)
+    +    points = [
+    +        validate_point(Point(1, (1.0, 0.0), {}), config),
+    +        validate_point(Point(2, (0.0, 1.0), {}), config),
+    +    ]
+    +    index = PlainVectorIndex(config.distance, points)
+    +
+    +    result = index.search_with_stats(query=(1.0, 0.0), limit=1)
+    +
+    +    assert result.visited_count == 2
+    +    assert result.candidates[0].point_id == 1
+    +
+    ```
+
+**测试锁定什么**
+
+这些测试锁定本 Stage 的正常路径、边界条件、失败可见性与恢复不变量。
+
+**如何构造反例**
+
+聚焦测试让精确可变 Segment经历正常路径、边界值、非法输入与本 Stage 可观察的失败边界。
+
+**关键测试语句**
+
+```python
+assert [(hit.point_id, hit.version) for hit in hits.candidates] == [(1, 1)]
+```
+
+这条断言把可观察结果与本 Stage 的状态、可见性或持久性边界绑定，而不只检查调用返回。
+
+**失败意味着什么**
+
+失败说明实现跨越了刚建立的语义、顺序、所有权或恢复边界。
+
+### 基本概念
+
+核心机制是精确可变 Segment。新 Point 需要受控的内存 Segment，统一协调替换、删除、过滤与精确向量检索。
+
+### 为什么需要这个机制
+
+新 Point 需要受控的内存 Segment，统一协调替换、删除、过滤与精确向量检索。 若不建立明确边界，后续机制只能依赖偶然行为。
+
+### 运行时心智模型
+
+一个 Point ID 至多对应一条活记录，每个搜索结果都从 Segment 当前受控状态重新推导。
+
+### 机制板块
+
+#### 精确可变 Segment机制
+
+一个 Point ID 至多对应一条活记录，每个搜索结果都从 Segment 当前受控状态重新推导。
+
+??? note "文件差异：src/miniqdrant/index/plain.py"
+    ```diff
+    diff --git a/src/miniqdrant/index/plain.py b/src/miniqdrant/index/plain.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..aaafff0601f05a9d37e41d4bdc24e776e2117b81
+    --- /dev/null
+    +++ b/src/miniqdrant/index/plain.py
+    @@ -0,0 +1,47 @@
+    +from __future__ import annotations
+    +
+    +from collections.abc import Iterable
+    +
+    +from miniqdrant.config import Distance
+    +from miniqdrant.filters import Filter, matches_filter
+    +from miniqdrant.metrics import score
+    +from miniqdrant.models import StoredPoint, Vector
+    +from miniqdrant.segment.base import ScoredCandidate, SegmentSearchResult
+    +from miniqdrant.topk import TopK
+    +
+    +
+    +class PlainVectorIndex:
+    +    def __init__(self, distance: Distance, points: Iterable[StoredPoint]) -> None:
+    +        self._distance = distance
+    +        self._points = tuple(points)
+    +        self._versions = {point.id: point.version for point in self._points}
+    +
+    +    def search(
+    +        self,
+    +        query: Vector,
+    +        limit: int,
+    +        filter_: Filter | None = None,
+    +    ) -> tuple[ScoredCandidate, ...]:
+    +        return self.search_with_stats(query, limit, filter_).candidates
+    +
+    +    def search_with_stats(
+    +        self,
+    +        query: Vector,
+    +        limit: int,
+    +        filter_: Filter | None = None,
+    +    ) -> SegmentSearchResult:
+    +        collector = TopK(limit)
+    +        visited = 0
+    +        for point in self._points:
+    +            if point.deleted:
+    +                continue
+    +            visited += 1
+    +            if not matches_filter(point.id, point.payload, filter_):
+    +                continue
+    +            collector.offer(point.id, score(self._distance, query, point.vector))
+    +        candidates = tuple(
+    +            ScoredCandidate(item.point_id, item.score, self._versions[item.point_id])
+    +            for item in collector.results()
+    +        )
+    +        return SegmentSearchResult(candidates, visited, "exact_full_scan")
+    +
+    ```
+
+??? note "文件差异：src/miniqdrant/segment/base.py"
+    ```diff
+    diff --git a/src/miniqdrant/segment/base.py b/src/miniqdrant/segment/base.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..9aaaa4dc7b4b42766043a5ac5375da125f62a11f
+    --- /dev/null
+    +++ b/src/miniqdrant/segment/base.py
+    @@ -0,0 +1,37 @@
+    +from __future__ import annotations
+    +
+    +from dataclasses import dataclass
+    +
+    +from miniqdrant.filters import Filter
+    +from miniqdrant.ids import PointId
+    +from miniqdrant.models import Vector
+    +
+    +
+    +@dataclass(frozen=True, slots=True)
+    +class SegmentSearchRequest:
+    +    vector: Vector
+    +    limit: int
+    +    filter: Filter | None = None
+    +    exact: bool = False
+    +    ef_search: int | None = None
+    +
+    +    def __post_init__(self) -> None:
+    +        if self.limit < 1:
+    +            raise ValueError("search limit must be positive")
+    +        if self.ef_search is not None and self.ef_search < 1:
+    +            raise ValueError("ef_search must be positive")
+    +
+    +
+    +@dataclass(frozen=True, slots=True)
+    +class ScoredCandidate:
+    +    point_id: PointId
+    +    score: float
+    +    version: int
+    +
+    +
+    +@dataclass(frozen=True, slots=True)
+    +class SegmentSearchResult:
+    +    candidates: tuple[ScoredCandidate, ...]
+    +    visited_count: int
+    +    strategy: str
+    +
+    ```
+
+??? note "文件差异：src/miniqdrant/segment/mutable.py"
+    ```diff
+    diff --git a/src/miniqdrant/segment/mutable.py b/src/miniqdrant/segment/mutable.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..979fb8314bb269acd6c7f96b5287c01548f3c775
+    --- /dev/null
+    +++ b/src/miniqdrant/segment/mutable.py
+    @@ -0,0 +1,74 @@
+    +from __future__ import annotations
+    +
+    +from dataclasses import replace
+    +
+    +from miniqdrant.config import CollectionConfig, Distance
+    +from miniqdrant.ids import PointId, canonicalize_point_id
+    +from miniqdrant.index.plain import PlainVectorIndex
+    +from miniqdrant.json_values import freeze_json_object
+    +from miniqdrant.models import Point, StoredPoint, normalize_cosine, validate_point, validate_vector
+    +from miniqdrant.segment.base import SegmentSearchRequest, SegmentSearchResult
+    +
+    +
+    +class MutableSegment:
+    +    def __init__(self, config: CollectionConfig) -> None:
+    +        self._config = config
+    +        self._records: dict[PointId, StoredPoint] = {}
+    +
+    +    @property
+    +    def live_count(self) -> int:
+    +        return sum(not record.deleted for record in self._records.values())
+    +
+    +    @property
+    +    def total_count(self) -> int:
+    +        return len(self._records)
+    +
+    +    def version_of(self, point_id: object) -> int | None:
+    +        record = self._records.get(canonicalize_point_id(point_id))
+    +        return None if record is None else record.version
+    +
+    +    def get(self, point_id: object) -> StoredPoint | None:
+    +        record = self._records.get(canonicalize_point_id(point_id))
+    +        if record is None or record.deleted:
+    +            return None
+    +        return record
+    +
+    +    def iter_live(self) -> tuple[StoredPoint, ...]:
+    +        return tuple(record for record in self._records.values() if not record.deleted)
+    +
+    +    def iter_records(self) -> tuple[StoredPoint, ...]:
+    +        return tuple(self._records.values())
+    +
+    +    def apply_upsert(self, point: Point, version: int) -> bool:
+    +        if version < 1:
+    +            raise ValueError("point version must be positive")
+    +        validated = validate_point(point, self._config)
+    +        current = self._records.get(validated.id)
+    +        if current is not None and current.version >= version:
+    +            return False
+    +        self._records[validated.id] = replace(validated, version=version)
+    +        return True
+    +
+    +    def apply_delete(self, point_id: object, version: int) -> bool:
+    +        if version < 1:
+    +            raise ValueError("point version must be positive")
+    +        canonical = canonicalize_point_id(point_id)
+    +        current = self._records.get(canonical)
+    +        if current is not None and current.version >= version:
+    +            return False
+    +        self._records[canonical] = StoredPoint(
+    +            id=canonical,
+    +            vector=(),
+    +            payload=freeze_json_object({}),
+    +            version=version,
+    +            deleted=True,
+    +        )
+    +        return True
+    +
+    +    def search(self, request: SegmentSearchRequest) -> SegmentSearchResult:
+    +        query = validate_vector(request.vector, self._config.dimension)
+    +        if self._config.distance is Distance.COSINE:
+    +            query = normalize_cosine(query)
+    +        index = PlainVectorIndex(self._config.distance, self.iter_live())
+    +        return index.search_with_stats(query, request.limit, request.filter)
+    +
+    ```
+
+**是什么，为什么现在需要**
+
+核心机制是精确可变 Segment。新 Point 需要受控的内存 Segment，统一协调替换、删除、过滤与精确向量检索。
+
+**在运行时做什么**
+
+一个 Point ID 至多对应一条活记录，每个搜索结果都从 Segment 当前受控状态重新推导。
+
+**关键语句理解**
+
+真正要守住的边界是：一个 Point ID 至多对应一条活记录，每个搜索结果都从 Segment 当前受控状态重新推导。
+
+#### 包、Fixture 与工程支撑
+
+保持包导出、测试语料、依赖与运行环境可复现。
+
+??? note "支撑文件差异（3 个文件）"
+    **`src/miniqdrant/__init__.py`**
+
+    ```diff
+    diff --git a/src/miniqdrant/__init__.py b/src/miniqdrant/__init__.py
+    index c14c225211f54423ba62568adc841a2ba4cd970d..e918d4e6e3cfa8f48637faa8959a67ac35adbbde 100644
+    --- a/src/miniqdrant/__init__.py
+    +++ b/src/miniqdrant/__init__.py
+    @@ -20,6 +20,7 @@ from miniqdrant.errors import (
+     )
+     from miniqdrant.filters import Filter, HasId, Match, Range, matches_filter
+     from miniqdrant.models import Point, SearchHit, SearchRequest, SearchResult, StoredPoint
+    +from miniqdrant.segment import MutableSegment, SegmentSearchRequest
+     from miniqdrant.topk import Candidate, TopK
+
+     __all__ = [
+    @@ -38,6 +39,7 @@ __all__ = [
+         "InvalidVectorError",
+         "Match",
+         "MiniQdrantError",
+    +    "MutableSegment",
+         "OptimizerConfig",
+         "PayloadIndexError",
+         "Point",
+    @@ -47,6 +49,7 @@ __all__ = [
+         "SearchHit",
+         "SearchRequest",
+         "SearchResult",
+    +    "SegmentSearchRequest",
+         "SnapshotError",
+         "StoredPoint",
+         "TopK",
+    ```
+
+    **`src/miniqdrant/index/__init__.py`**
+
+    ```diff
+    diff --git a/src/miniqdrant/index/__init__.py b/src/miniqdrant/index/__init__.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..6258a2e6c9801284328037ba58744bfda1821b42
+    --- /dev/null
+    +++ b/src/miniqdrant/index/__init__.py
+    @@ -0,0 +1,4 @@
+    +from miniqdrant.index.plain import PlainVectorIndex
+    +
+    +__all__ = ["PlainVectorIndex"]
+    +
+    ```
+
+    **`src/miniqdrant/segment/__init__.py`**
+
+    ```diff
+    diff --git a/src/miniqdrant/segment/__init__.py b/src/miniqdrant/segment/__init__.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..49eebdc819a89772624720484aa7defcc868940f
+    --- /dev/null
+    +++ b/src/miniqdrant/segment/__init__.py
+    @@ -0,0 +1,14 @@
+    +from miniqdrant.segment.base import (
+    +    ScoredCandidate,
+    +    SegmentSearchRequest,
+    +    SegmentSearchResult,
+    +)
+    +from miniqdrant.segment.mutable import MutableSegment
+    +
+    +__all__ = [
+    +    "MutableSegment",
+    +    "ScoredCandidate",
+    +    "SegmentSearchRequest",
+    +    "SegmentSearchResult",
+    +]
+    +
+    ```
+
+
+### 验证证据
+
+运行 `uv run pytest -q $(cat journey/stages/04-mutable-segment/tests.txt)`，再用 Journey Check 比较累计源码与标准 Stage。
+
+### 需要真正记住的内容
+
+真正要守住的边界是：一个 Point ID 至多对应一条活记录，每个搜索结果都从 Segment 当前受控状态重新推导。
+
+### 用自己的话讲清楚
+
+请解释这个 Stage 关闭的失败窗口、运行时状态如何变化，以及哪条语句守住边界。
+
+### 教材
+
+[第 4 章](https://github.com/system-in-miniature/mini-qdrant/blob/main/docs/zh/tutorial/04-segments.md)
+
+[Complete reference patch / 完整参考补丁](https://github.com/system-in-miniature/mini-qdrant/blob/main/journey/stages/04-mutable-segment/stage.patch)

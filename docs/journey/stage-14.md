@@ -1,0 +1,1579 @@
+# Stage 14 · Concurrency and acceptance closure
+
+### Goal
+
+Build concurrency and acceptance closure and explain its boundary from an executable counterexample, runtime state, and the critical statement.
+
+??? note "Deliverable files"
+    - `src/miniqdrant/cli.py`
+    - `src/miniqdrant/collection.py`
+    - `src/miniqdrant/labs/__init__.py`
+    - `src/miniqdrant/labs/filtering.py`
+    - `src/miniqdrant/labs/recall.py`
+    - `src/miniqdrant/labs/recovery.py`
+    - `src/miniqdrant/labs/segments.py`
+    - `src/miniqdrant/persistence/manifest.py`
+    - `tests/acceptance/test_cli.py`
+    - `tests/acceptance/test_cross_segment_search.py`
+    - `tests/acceptance/test_final_acceptance.py`
+    - `tests/acceptance/test_labs.py`
+    - `tests/concurrency/test_online_optimize.py`
+    - `tests/contract/test_collection.py`
+    - `tests/contract/test_lifecycle.py`
+    - `tests/storage/test_manifest.py`
+    - `tests/test_sloc_report.py`
+
+### The problem at this point
+
+Flush and optimize can race, while cross-segment merge can surface the same point id more than once unless lifecycle ownership is tightened.
+
+### Test contract
+
+#### See the failure first
+
+The focused tests force concurrency and acceptance closure through happy paths, boundary values, invalid inputs, and the Stage's observable failure edges.
+
+??? note "File diff: tests/acceptance/test_cli.py"
+    ```diff
+    diff --git a/tests/acceptance/test_cli.py b/tests/acceptance/test_cli.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..8a33d6d732e26568b41ad7ce9a643e58221d9715
+    --- /dev/null
+    +++ b/tests/acceptance/test_cli.py
+    @@ -0,0 +1,85 @@
+    +from __future__ import annotations
+    +
+    +import json
+    +import subprocess
+    +
+    +
+    +def _cli(*arguments: object) -> subprocess.CompletedProcess[str]:
+    +    return subprocess.run(
+    +        ["uv", "run", "miniqdrant", *(str(argument) for argument in arguments)],
+    +        check=True,
+    +        capture_output=True,
+    +        text=True,
+    +    )
+    +
+    +
+    +def test_cli_create_upsert_search(tmp_path) -> None:
+    +    points = tmp_path / "points.jsonl"
+    +    points.write_text(
+    +        "\n".join(
+    +            [
+    +                '{"id":1,"vector":[1,0],"payload":{"name":"one"}}',
+    +                '{"id":2,"vector":[0,1],"payload":{"name":"two"}}',
+    +            ]
+    +        )
+    +        + "\n"
+    +    )
+    +
+    +    _cli(
+    +        "create",
+    +        tmp_path / "db",
+    +        "items",
+    +        "--dimension",
+    +        2,
+    +        "--distance",
+    +        "cosine",
+    +    )
+    +    upsert = _cli("upsert", tmp_path / "db", "items", points)
+    +    result = _cli("search", tmp_path / "db", "items", "[1,0]", "--limit", 1)
+    +
+    +    assert json.loads(upsert.stdout)["accepted"] == 2
+    +    assert json.loads(result.stdout)["hits"][0]["id"] == 1
+    +
+    +
+    +def test_cli_snapshot_and_restore(tmp_path) -> None:
+    +    points = tmp_path / "points.jsonl"
+    +    points.write_text('{"id":7,"vector":[1,0],"payload":{}}\n')
+    +    _cli("create", tmp_path / "db", "items", "--dimension", 2)
+    +    _cli("upsert", tmp_path / "db", "items", points)
+    +
+    +    _cli("snapshot", tmp_path / "db", "items", tmp_path / "snapshot")
+    +    _cli(
+    +        "restore",
+    +        tmp_path / "snapshot",
+    +        tmp_path / "restored",
+    +        "copy",
+    +    )
+    +    result = _cli("search", tmp_path / "restored", "copy", "[1,0]")
+    +
+    +    assert json.loads(result.stdout)["hits"][0]["id"] == 7
+    +
+    +
+    +def test_cli_payload_index_and_info_use_collection_api(tmp_path) -> None:
+    +    _cli("create", tmp_path / "db", "items", "--dimension", 2)
+    +
+    +    indexed = _cli(
+    +        "payload-index",
+    +        tmp_path / "db",
+    +        "items",
+    +        "category",
+    +        "keyword",
+    +    )
+    +    info = _cli("info", tmp_path / "db", "items")
+    +
+    +    assert json.loads(indexed.stdout) == {
+    +        "field": "category",
+    +        "schema": "keyword",
+    +    }
+    +    assert json.loads(info.stdout) == {
+    +        "count": 0,
+    +        "dimension": 2,
+    +        "distance": "cosine",
+    +        "name": "items",
+    +        "payload_indexes": {"category": "keyword"},
+    +        "segments": 0,
+    +    }
+    ```
+
+**What this test locks**
+
+These tests lock the Stage's happy path, boundary conditions, visible failures, and recovery invariants.
+
+**How it constructs the counterexample**
+
+The focused tests force concurrency and acceptance closure through happy paths, boundary values, invalid inputs, and the Stage's observable failure edges.
+
+**Key test statement**
+
+```python
+assert json.loads(upsert.stdout)["accepted"] == 2
+```
+
+This assertion binds the observable result to the Stage's state, visibility, or durability boundary rather than merely checking that a call returned.
+
+**What a failure means**
+
+A failure means the implementation crossed the semantic, ordering, ownership, or recovery boundary just introduced.
+
+??? note "File diff: tests/acceptance/test_cross_segment_search.py"
+    ```diff
+    diff --git a/tests/acceptance/test_cross_segment_search.py b/tests/acceptance/test_cross_segment_search.py
+    index 7d4df3e0a3141ae69b6057cb608312cdc7d9fb56..adcddd09b61089c1f669ef21eab9f95517f08cec 100644
+    --- a/tests/acceptance/test_cross_segment_search.py
+    +++ b/tests/acceptance/test_cross_segment_search.py
+    @@ -1,6 +1,11 @@
+     from __future__ import annotations
+
+    -from miniqdrant import Database, Distance, Point, SearchRequest
+    +from dataclasses import replace
+    +
+    +from miniqdrant import CollectionConfig, Database, Distance, Point, SearchRequest
+    +from miniqdrant.collection import _search
+    +from miniqdrant.models import validate_point
+    +from miniqdrant.segment import ImmutableSegment
+
+
+     def test_latest_version_wins_even_when_old_scores_higher(tmp_path) -> None:
+    @@ -53,3 +58,49 @@ def test_cross_segment_topk_is_globally_ordered(tmp_path) -> None:
+         assert [hit.id for hit in result.hits] == [2, 3]
+         assert collection.count() == 3
+
+    +
+    +def test_global_merge_deduplicates_same_version_point_copies() -> None:
+    +    config = CollectionConfig(dimension=2, distance=Distance.DOT)
+    +    point = replace(
+    +        validate_point(Point(1, (1.0, 0.0), {}), config),
+    +        version=1,
+    +    )
+    +    segment = ImmutableSegment.build(config, [point])
+    +
+    +    result = _search(
+    +        config,
+    +        (segment, segment),
+    +        {point.id: point},
+    +        SearchRequest((1.0, 0.0), limit=10, exact=True),
+    +    )
+    +
+    +    assert [hit.id for hit in result.hits] == [1]
+    +
+    +
+    +def test_many_stale_high_scores_cannot_hide_a_visible_lower_candidate(tmp_path) -> None:
+    +    collection = Database.open(tmp_path).create_collection(
+    +        "items",
+    +        dimension=2,
+    +        distance=Distance.DOT,
+    +    )
+    +    collection.upsert(
+    +        [
+    +            *(
+    +                Point(point_id, (11.0 - point_id, 0.0), {})
+    +                for point_id in range(1, 6)
+    +            ),
+    +            Point(99, (5.0, 0.0), {}),
+    +        ]
+    +    )
+    +    collection.flush()
+    +    collection.upsert(
+    +        [
+    +            Point(point_id, (point_id / 10.0, 0.0), {})
+    +            for point_id in range(1, 6)
+    +        ]
+    +    )
+    +    collection.flush()
+    +
+    +    result = collection.search(SearchRequest((1.0, 0.0), limit=1, exact=True))
+    +
+    +    assert [hit.id for hit in result.hits] == [99]
+    ```
+
+**What this test locks**
+
+These tests lock the Stage's happy path, boundary conditions, visible failures, and recovery invariants.
+
+**How it constructs the counterexample**
+
+The focused tests force concurrency and acceptance closure through happy paths, boundary values, invalid inputs, and the Stage's observable failure edges.
+
+**Key test statement**
+
+```python
+assert json.loads(upsert.stdout)["accepted"] == 2
+```
+
+This assertion binds the observable result to the Stage's state, visibility, or durability boundary rather than merely checking that a call returned.
+
+**What a failure means**
+
+A failure means the implementation crossed the semantic, ordering, ownership, or recovery boundary just introduced.
+
+??? note "File diff: tests/acceptance/test_final_acceptance.py"
+    ```diff
+    diff --git a/tests/acceptance/test_final_acceptance.py b/tests/acceptance/test_final_acceptance.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..8934ff75e8a1ca77e14bbdf23d634f6345689ce7
+    --- /dev/null
+    +++ b/tests/acceptance/test_final_acceptance.py
+    @@ -0,0 +1,67 @@
+    +from __future__ import annotations
+    +
+    +from miniqdrant import (
+    +    Database,
+    +    Distance,
+    +    Filter,
+    +    Match,
+    +    OptimizerConfig,
+    +    PayloadSchema,
+    +    Point,
+    +    ScalarQuantizationConfig,
+    +    SearchRequest,
+    +)
+    +
+    +
+    +def test_full_semantic_closure(tmp_path) -> None:
+    +    database = Database.open(tmp_path)
+    +    collection = database.create_collection(
+    +        "items",
+    +        dimension=4,
+    +        distance=Distance.COSINE,
+    +        optimizer=OptimizerConfig(indexing_threshold_points=1),
+    +        quantization=ScalarQuantizationConfig(oversampling=4),
+    +    )
+    +    collection.create_payload_index("category", PayloadSchema.KEYWORD)
+    +    collection.upsert(
+    +        [
+    +            Point(1, (1.0, 0.0, 0.0, 0.0), {"category": "book"}),
+    +            Point(2, (0.9, 0.1, 0.0, 0.0), {"category": "book"}),
+    +            Point(3, (0.0, 1.0, 0.0, 0.0), {"category": "film"}),
+    +            Point(4, (0.0, 0.0, 1.0, 0.0), {"category": "book"}),
+    +        ]
+    +    )
+    +    request = SearchRequest(
+    +        (1.0, 0.0, 0.0, 0.0),
+    +        3,
+    +        filter=Filter(must=(Match("category", "book"),)),
+    +    )
+    +    exact = collection.search(
+    +        SearchRequest(
+    +            request.vector,
+    +            request.limit,
+    +            filter=request.filter,
+    +            exact=True,
+    +        )
+    +    )
+    +
+    +    collection.optimize()
+    +    approximate = collection.search(request)
+    +    collection.delete([2])
+    +    collection.flush()
+    +    database.simulate_process_loss()
+    +
+    +    reopened = Database.open(tmp_path).collection("items")
+    +    restored = reopened.search(
+    +        SearchRequest(
+    +            request.vector,
+    +            request.limit,
+    +            filter=request.filter,
+    +            exact=True,
+    +        )
+    +    )
+    +
+    +    assert {hit.id for hit in approximate.hits} == {hit.id for hit in exact.hits}
+    +    assert approximate.plan == ("quantized_hnsw_rescore",)
+    +    assert [hit.id for hit in restored.hits] == [1, 4]
+    +    assert reopened.retrieve([2]) == ()
+    ```
+
+**What this test locks**
+
+These tests lock the Stage's happy path, boundary conditions, visible failures, and recovery invariants.
+
+**How it constructs the counterexample**
+
+The focused tests force concurrency and acceptance closure through happy paths, boundary values, invalid inputs, and the Stage's observable failure edges.
+
+**Key test statement**
+
+```python
+assert json.loads(upsert.stdout)["accepted"] == 2
+```
+
+This assertion binds the observable result to the Stage's state, visibility, or durability boundary rather than merely checking that a call returned.
+
+**What a failure means**
+
+A failure means the implementation crossed the semantic, ordering, ownership, or recovery boundary just introduced.
+
+??? note "File diff: tests/acceptance/test_labs.py"
+    ```diff
+    diff --git a/tests/acceptance/test_labs.py b/tests/acceptance/test_labs.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..92196daffab0e20836fdc797c4f521eb3e1e6c7e
+    --- /dev/null
+    +++ b/tests/acceptance/test_labs.py
+    @@ -0,0 +1,17 @@
+    +from __future__ import annotations
+    +
+    +from miniqdrant.labs.filtering import run_filtering_lab
+    +from miniqdrant.labs.recall import run_recall_lab
+    +from miniqdrant.labs.recovery import run_recovery_lab
+    +from miniqdrant.labs.segments import run_segments_lab
+    +
+    +
+    +def test_labs_are_deterministic_and_report_the_mechanism(tmp_path) -> None:
+    +    first = run_recall_lab(seed=11, points=80, queries=5)
+    +    second = run_recall_lab(seed=11, points=80, queries=5)
+    +
+    +    assert first == second
+    +    assert 0.0 <= first["recall_at_5"] <= 1.0
+    +    assert run_filtering_lab(tmp_path / "filter")["matching_ids"] == [1, 3]
+    +    assert run_segments_lab(tmp_path / "segments")["after_segments"] == 1
+    +    assert run_recovery_lab(tmp_path / "recovery")["restored_ids"] == [1, 2]
+    ```
+
+**What this test locks**
+
+These tests lock the Stage's happy path, boundary conditions, visible failures, and recovery invariants.
+
+**How it constructs the counterexample**
+
+The focused tests force concurrency and acceptance closure through happy paths, boundary values, invalid inputs, and the Stage's observable failure edges.
+
+**Key test statement**
+
+```python
+assert json.loads(upsert.stdout)["accepted"] == 2
+```
+
+This assertion binds the observable result to the Stage's state, visibility, or durability boundary rather than merely checking that a call returned.
+
+**What a failure means**
+
+A failure means the implementation crossed the semantic, ordering, ownership, or recovery boundary just introduced.
+
+??? note "File diff: tests/concurrency/test_online_optimize.py"
+    ```diff
+    diff --git a/tests/concurrency/test_online_optimize.py b/tests/concurrency/test_online_optimize.py
+    index b91ab12f41ec6580bc587668eb9205b02c9903f6..809c142c9ae5c8ca497d53432e883f06d097cc82 100644
+    --- a/tests/concurrency/test_online_optimize.py
+    +++ b/tests/concurrency/test_online_optimize.py
+    @@ -1,5 +1,8 @@
+     from __future__ import annotations
+
+    +from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    +from threading import Event
+    +
+     from miniqdrant import Database, Distance, Point, SearchRequest
+     from miniqdrant.optimizer.failures import OptimizationGate
+
+    @@ -25,6 +28,39 @@ def test_write_during_build_wins_after_publish(tmp_path) -> None:
+         assert collection.search(SearchRequest((1.0, 0.0), 10, exact=True)).hits[0].score == 0.0
+
+
+    +def test_flush_during_build_waits_and_does_not_duplicate_hits(tmp_path) -> None:
+    +    collection = Database.open(tmp_path).create_collection(
+    +        "items",
+    +        dimension=2,
+    +        distance=Distance.DOT,
+    +    )
+    +    collection.upsert([Point(1, (1.0, 0.0), {})])
+    +    gate = OptimizationGate()
+    +    optimizer = collection.start_optimize(gate=gate)
+    +    gate.wait_until("sources_captured")
+    +    flush_started = Event()
+    +
+    +    def flush() -> None:
+    +        flush_started.set()
+    +        collection.flush()
+    +
+    +    with ThreadPoolExecutor(max_workers=1) as executor:
+    +        pending_flush = executor.submit(flush)
+    +        assert flush_started.wait(timeout=5)
+    +        try:
+    +            pending_flush.result(timeout=0.05)
+    +            flush_waited_for_optimizer = False
+    +        except TimeoutError:
+    +            flush_waited_for_optimizer = True
+    +        gate.release("finish_build")
+    +        optimizer.result(timeout=5)
+    +        pending_flush.result(timeout=5)
+    +
+    +    hits = collection.search(SearchRequest((1.0, 0.0), 10, exact=True)).hits
+    +    assert flush_waited_for_optimizer
+    +    assert [hit.id for hit in hits] == [1]
+    +
+    +
+     def test_existing_view_can_finish_after_merge(tmp_path) -> None:
+         collection = Database.open(tmp_path).create_collection(
+             "items",
+    @@ -42,4 +78,3 @@ def test_existing_view_can_finish_after_merge(tmp_path) -> None:
+         assert all(path.exists() for path in old_paths)
+         old_view.close()
+         assert all(not path.exists() for path in old_paths)
+    -
+    ```
+
+**What this test locks**
+
+These tests lock the Stage's happy path, boundary conditions, visible failures, and recovery invariants.
+
+**How it constructs the counterexample**
+
+The focused tests force concurrency and acceptance closure through happy paths, boundary values, invalid inputs, and the Stage's observable failure edges.
+
+**Key test statement**
+
+```python
+assert json.loads(upsert.stdout)["accepted"] == 2
+```
+
+This assertion binds the observable result to the Stage's state, visibility, or durability boundary rather than merely checking that a call returned.
+
+**What a failure means**
+
+A failure means the implementation crossed the semantic, ordering, ownership, or recovery boundary just introduced.
+
+??? note "File diff: tests/contract/test_collection.py"
+    ```diff
+    diff --git a/tests/contract/test_collection.py b/tests/contract/test_collection.py
+    index dd75b733b69411bb26dd061b543e5ec2fc44cb56..c85211d3eb798df4a37df809c8389acad8502785 100644
+    --- a/tests/contract/test_collection.py
+    +++ b/tests/contract/test_collection.py
+    @@ -28,6 +28,33 @@ def test_invalid_batch_does_not_partially_apply(tmp_path) -> None:
+         assert collection.retrieve([1, 2]) == ()
+
+
+    +def test_payload_mutations_create_versioned_full_point_images(tmp_path) -> None:
+    +    database = Database.open(tmp_path)
+    +    collection = database.create_collection(
+    +        "items",
+    +        dimension=2,
+    +        distance=Distance.DOT,
+    +    )
+    +    collection.upsert(
+    +        [
+    +            Point(1, (1.0, 0.0), {"a": 1, "remove": True}),
+    +            Point(2, (0.0, 1.0), {"a": 2}),
+    +        ]
+    +    )
+    +
+    +    collection.replace_payload([1], {"kind": "book", "remove": True})
+    +    collection.merge_payload([1, 2], {"active": True})
+    +    collection.delete_payload_keys([1], ["remove"])
+    +    database.close()
+    +
+    +    reopened = Database.open(tmp_path).collection("items")
+    +    first, second = reopened.retrieve([1, 2])
+    +    assert dict(first.payload) == {"active": True, "kind": "book"}
+    +    assert dict(second.payload) == {"a": 2, "active": True}
+    +    assert first.vector == (1.0, 0.0)
+    +    assert second.vector == (0.0, 1.0)
+    +
+    +
+     def test_upsert_delete_retrieve_and_search(tmp_path) -> None:
+         database = Database.open(tmp_path)
+         collection = database.create_collection("items", dimension=2, distance=Distance.DOT)
+    @@ -81,4 +108,3 @@ def test_collection_close_is_idempotent_and_rejects_new_work(tmp_path) -> None:
+
+         with pytest.raises(ClosedResourceError):
+             collection.upsert([Point(1, (1.0, 0.0), {})])
+    -
+    ```
+
+**What this test locks**
+
+These tests lock the Stage's happy path, boundary conditions, visible failures, and recovery invariants.
+
+**How it constructs the counterexample**
+
+The focused tests force concurrency and acceptance closure through happy paths, boundary values, invalid inputs, and the Stage's observable failure edges.
+
+**Key test statement**
+
+```python
+assert json.loads(upsert.stdout)["accepted"] == 2
+```
+
+This assertion binds the observable result to the Stage's state, visibility, or durability boundary rather than merely checking that a call returned.
+
+**What a failure means**
+
+A failure means the implementation crossed the semantic, ordering, ownership, or recovery boundary just introduced.
+
+??? note "File diff: tests/contract/test_lifecycle.py"
+    ```diff
+    diff --git a/tests/contract/test_lifecycle.py b/tests/contract/test_lifecycle.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..7bcf4c05a2f6eea2b433ef5bc6454e1fb92fc468
+    --- /dev/null
+    +++ b/tests/contract/test_lifecycle.py
+    @@ -0,0 +1,88 @@
+    +from __future__ import annotations
+    +
+    +from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    +
+    +import pytest
+    +
+    +from miniqdrant import (
+    +    ClosedResourceError,
+    +    Database,
+    +    Distance,
+    +    Point,
+    +    SearchRequest,
+    +)
+    +from miniqdrant.optimizer.failures import OptimizationGate
+    +
+    +
+    +def test_close_is_idempotent_and_rejects_new_collection_work(tmp_path) -> None:
+    +    collection = Database.open(tmp_path).create_collection(
+    +        "items",
+    +        dimension=2,
+    +        distance=Distance.DOT,
+    +    )
+    +    collection.close()
+    +    collection.close()
+    +
+    +    with pytest.raises(ClosedResourceError):
+    +        collection.upsert([Point(1, (1.0, 0.0), {})])
+    +    with pytest.raises(ClosedResourceError):
+    +        collection.search(SearchRequest((1.0, 0.0), 1))
+    +
+    +
+    +def test_database_close_closes_owned_collections(tmp_path) -> None:
+    +    database = Database.open(tmp_path)
+    +    collection = database.create_collection(
+    +        "items",
+    +        dimension=2,
+    +        distance=Distance.DOT,
+    +    )
+    +
+    +    database.close()
+    +    database.close()
+    +
+    +    with pytest.raises(ClosedResourceError):
+    +        database.collection("items")
+    +    with pytest.raises(ClosedResourceError):
+    +        collection.retrieve([1])
+    +
+    +
+    +def test_close_waits_for_active_optimizer_before_closing_wal(tmp_path) -> None:
+    +    collection = Database.open(tmp_path).create_collection(
+    +        "items",
+    +        dimension=2,
+    +        distance=Distance.DOT,
+    +    )
+    +    collection.upsert([Point(1, (1.0, 0.0), {})])
+    +    gate = OptimizationGate()
+    +    optimizer = collection.start_optimize(gate=gate)
+    +    gate.wait_until("sources_captured")
+    +
+    +    with ThreadPoolExecutor(max_workers=1) as executor:
+    +        close = executor.submit(collection.close)
+    +        with pytest.raises(TimeoutError):
+    +            close.result(timeout=0.05)
+    +        gate.release("finish_build")
+    +        close.result(timeout=5)
+    +
+    +    optimizer.result(timeout=5)
+    +    reopened = Database.open(tmp_path).collection("items")
+    +    assert reopened.retrieve([1])[0].id == 1
+    +
+    +
+    +def test_close_waits_for_owned_collection_views(tmp_path) -> None:
+    +    collection = Database.open(tmp_path).create_collection(
+    +        "items",
+    +        dimension=2,
+    +        distance=Distance.DOT,
+    +    )
+    +    collection.upsert([Point(1, (1.0, 0.0), {})])
+    +    view = collection.capture_view()
+    +
+    +    with ThreadPoolExecutor(max_workers=1) as executor:
+    +        close = executor.submit(collection.close)
+    +        with pytest.raises(TimeoutError):
+    +            close.result(timeout=0.05)
+    +        view.close()
+    +        close.result(timeout=5)
+    +
+    +    assert collection.closed
+    ```
+
+**What this test locks**
+
+These tests lock the Stage's happy path, boundary conditions, visible failures, and recovery invariants.
+
+**How it constructs the counterexample**
+
+The focused tests force concurrency and acceptance closure through happy paths, boundary values, invalid inputs, and the Stage's observable failure edges.
+
+**Key test statement**
+
+```python
+assert json.loads(upsert.stdout)["accepted"] == 2
+```
+
+This assertion binds the observable result to the Stage's state, visibility, or durability boundary rather than merely checking that a call returned.
+
+**What a failure means**
+
+A failure means the implementation crossed the semantic, ordering, ownership, or recovery boundary just introduced.
+
+??? note "File diff: tests/storage/test_manifest.py"
+    ```diff
+    diff --git a/tests/storage/test_manifest.py b/tests/storage/test_manifest.py
+    index 2ae30dc6747fce800813ce2fb704ef241cd42cb6..ac7edaf2a5fc2702c2a984ab25939c5946e99cb2 100644
+    --- a/tests/storage/test_manifest.py
+    +++ b/tests/storage/test_manifest.py
+    @@ -40,3 +40,15 @@ def test_missing_current_manifest_is_corruption(tmp_path) -> None:
+         with pytest.raises(CorruptionError, match="manifest"):
+             store.load_current()
+
+    +
+    +@pytest.mark.parametrize(
+    +    "segments",
+    +    [
+    +        ("../outside",),
+    +        ("seg-a/child",),
+    +        ("seg-a", "seg-a"),
+    +    ],
+    +)
+    +def test_manifest_rejects_unsafe_or_duplicate_segment_ids(segments) -> None:
+    +    with pytest.raises(ValueError, match="segment"):
+    +        manifest(1, *segments)
+    ```
+
+**What this test locks**
+
+These tests lock the Stage's happy path, boundary conditions, visible failures, and recovery invariants.
+
+**How it constructs the counterexample**
+
+The focused tests force concurrency and acceptance closure through happy paths, boundary values, invalid inputs, and the Stage's observable failure edges.
+
+**Key test statement**
+
+```python
+assert json.loads(upsert.stdout)["accepted"] == 2
+```
+
+This assertion binds the observable result to the Stage's state, visibility, or durability boundary rather than merely checking that a call returned.
+
+**What a failure means**
+
+A failure means the implementation crossed the semantic, ordering, ownership, or recovery boundary just introduced.
+
+??? note "File diff: tests/test_sloc_report.py"
+    ```diff
+    diff --git a/tests/test_sloc_report.py b/tests/test_sloc_report.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..68e73ab37048cae7c547656de79974d2d159cfce
+    --- /dev/null
+    +++ b/tests/test_sloc_report.py
+    @@ -0,0 +1,34 @@
+    +from __future__ import annotations
+    +
+    +import json
+    +import subprocess
+    +import sys
+    +from pathlib import Path
+    +
+    +
+    +def test_sloc_report_is_deterministic_and_additive() -> None:
+    +    command = [sys.executable, "tools/count_sloc.py"]
+    +    root = Path(__file__).resolve().parents[1]
+    +    first = json.loads(
+    +        subprocess.run(
+    +            command,
+    +            cwd=root,
+    +            check=True,
+    +            capture_output=True,
+    +            text=True,
+    +        ).stdout
+    +    )
+    +    second = json.loads(
+    +        subprocess.run(
+    +            command,
+    +            cwd=root,
+    +            check=True,
+    +            capture_output=True,
+    +            text=True,
+    +        ).stdout
+    +    )
+    +
+    +    assert first == second
+    +    assert first["total"] == sum(first["files"].values())
+    +    assert first["files"]["src/miniqdrant/collection.py"] > 100
+    +    assert all(count > 0 for count in first["files"].values())
+    ```
+
+**What this test locks**
+
+These tests lock the Stage's happy path, boundary conditions, visible failures, and recovery invariants.
+
+**How it constructs the counterexample**
+
+The focused tests force concurrency and acceptance closure through happy paths, boundary values, invalid inputs, and the Stage's observable failure edges.
+
+**Key test statement**
+
+```python
+assert json.loads(upsert.stdout)["accepted"] == 2
+```
+
+This assertion binds the observable result to the Stage's state, visibility, or durability boundary rather than merely checking that a call returned.
+
+**What a failure means**
+
+A failure means the implementation crossed the semantic, ordering, ownership, or recovery boundary just introduced.
+
+### Basic concepts
+
+The central mechanism is concurrency and acceptance closure. Flush and optimize can race, while cross-segment merge can surface the same point id more than once unless lifecycle ownership is tightened.
+
+### Why this mechanism is necessary
+
+Flush and optimize can race, while cross-segment merge can surface the same point id more than once unless lifecycle ownership is tightened. Without an explicit boundary, every later mechanism would depend on accidental behavior.
+
+### Runtime mental model
+
+lifecycle mutations serialize at publication and merged search emits only the newest live identity for each point.
+
+### Mechanism blocks
+
+#### Concurrency and acceptance closure mechanism
+
+lifecycle mutations serialize at publication and merged search emits only the newest live identity for each point.
+
+??? note "File diff: src/miniqdrant/cli.py"
+    ```diff
+    diff --git a/src/miniqdrant/cli.py b/src/miniqdrant/cli.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..ddca9e63ece2ab82f131c3a9d5f102daed1f4a85
+    --- /dev/null
+    +++ b/src/miniqdrant/cli.py
+    @@ -0,0 +1,221 @@
+    +from __future__ import annotations
+    +
+    +import argparse
+    +import json
+    +from collections.abc import Sequence
+    +from pathlib import Path
+    +from uuid import UUID
+    +
+    +from miniqdrant.config import Distance
+    +from miniqdrant.database import Database
+    +from miniqdrant.filters.index import PayloadSchema
+    +from miniqdrant.json_values import thaw_json
+    +from miniqdrant.models import Point, SearchRequest
+    +
+    +
+    +def main(arguments: Sequence[str] | None = None) -> int:
+    +    parser = _parser()
+    +    options = parser.parse_args(arguments)
+    +    result = options.run(options)
+    +    if result is not None:
+    +        print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+    +    return 0
+    +
+    +
+    +def _parser() -> argparse.ArgumentParser:
+    +    parser = argparse.ArgumentParser(
+    +        prog="miniqdrant",
+    +        description="Direct-first filtered vector search reference runtime.",
+    +    )
+    +    commands = parser.add_subparsers(dest="command", required=True)
+    +
+    +    create = commands.add_parser("create", help="create a collection")
+    +    create.add_argument("database")
+    +    create.add_argument("collection")
+    +    create.add_argument("--dimension", required=True, type=int)
+    +    create.add_argument(
+    +        "--distance",
+    +        choices=tuple(item.value for item in Distance),
+    +        default=Distance.COSINE.value,
+    +    )
+    +    create.set_defaults(run=_create)
+    +
+    +    upsert = commands.add_parser("upsert", help="upsert JSONL points")
+    +    upsert.add_argument("database")
+    +    upsert.add_argument("collection")
+    +    upsert.add_argument("points")
+    +    upsert.set_defaults(run=_upsert)
+    +
+    +    search = commands.add_parser("search", help="search a collection")
+    +    search.add_argument("database")
+    +    search.add_argument("collection")
+    +    search.add_argument("vector")
+    +    search.add_argument("--limit", type=int, default=10)
+    +    search.add_argument("--exact", action="store_true")
+    +    search.add_argument("--with-vector", action="store_true")
+    +    search.set_defaults(run=_search)
+    +
+    +    flush = commands.add_parser("flush", help="publish the mutable segment")
+    +    flush.add_argument("database")
+    +    flush.add_argument("collection")
+    +    flush.add_argument("--indexed", action="store_true")
+    +    flush.set_defaults(run=_flush)
+    +
+    +    optimize = commands.add_parser("optimize", help="merge, vacuum, and index")
+    +    optimize.add_argument("database")
+    +    optimize.add_argument("collection")
+    +    optimize.set_defaults(run=_optimize)
+    +
+    +    payload_index = commands.add_parser(
+    +        "payload-index",
+    +        help="create a payload field index",
+    +    )
+    +    payload_index.add_argument("database")
+    +    payload_index.add_argument("collection")
+    +    payload_index.add_argument("field")
+    +    payload_index.add_argument(
+    +        "schema",
+    +        choices=tuple(item.value for item in PayloadSchema),
+    +    )
+    +    payload_index.set_defaults(run=_payload_index)
+    +
+    +    info = commands.add_parser("info", help="describe a collection")
+    +    info.add_argument("database")
+    +    info.add_argument("collection")
+    +    info.set_defaults(run=_info)
+    +
+    +    snapshot = commands.add_parser("snapshot", help="create an atomic snapshot")
+    +    snapshot.add_argument("database")
+    +    snapshot.add_argument("collection")
+    +    snapshot.add_argument("destination")
+    +    snapshot.set_defaults(run=_snapshot)
+    +
+    +    restore = commands.add_parser("restore", help="restore a collection snapshot")
+    +    restore.add_argument("snapshot")
+    +    restore.add_argument("database")
+    +    restore.add_argument("collection")
+    +    restore.add_argument("--replace", action="store_true")
+    +    restore.set_defaults(run=_restore)
+    +    return parser
+    +
+    +
+    +def _create(options: argparse.Namespace) -> dict[str, object]:
+    +    with _database(options.database) as database:
+    +        collection = database.create_collection(
+    +            options.collection,
+    +            dimension=options.dimension,
+    +            distance=options.distance,
+    +        )
+    +        return {
+    +            "collection": collection.name,
+    +            "dimension": collection.config.dimension,
+    +            "distance": collection.config.distance.value,
+    +        }
+    +
+    +
+    +def _upsert(options: argparse.Namespace) -> dict[str, object]:
+    +    points = tuple(
+    +        Point(item["id"], item["vector"], item.get("payload", {}))
+    +        for line in Path(options.points).read_text().splitlines()
+    +        if line.strip()
+    +        for item in (json.loads(line),)
+    +    )
+    +    with _database(options.database) as database:
+    +        sequence = database.collection(options.collection).upsert(points)
+    +        return {"accepted": len(points), "sequence": sequence}
+    +
+    +
+    +def _search(options: argparse.Namespace) -> dict[str, object]:
+    +    vector = json.loads(options.vector)
+    +    with _database(options.database) as database:
+    +        result = database.collection(options.collection).search(
+    +            SearchRequest(
+    +                vector,
+    +                options.limit,
+    +                exact=options.exact,
+    +                with_vector=options.with_vector,
+    +            )
+    +        )
+    +        return {
+    +            "hits": [
+    +                {
+    +                    "id": _json_id(hit.id),
+    +                    "score": hit.score,
+    +                    "payload": (
+    +                        None if hit.payload is None else thaw_json(hit.payload)
+    +                    ),
+    +                    "vector": hit.vector,
+    +                }
+    +                for hit in result.hits
+    +            ],
+    +            "plan": result.plan,
+    +        }
+    +
+    +
+    +def _flush(options: argparse.Namespace) -> dict[str, object]:
+    +    with _database(options.database) as database:
+    +        collection = database.collection(options.collection)
+    +        collection.flush(indexed=options.indexed)
+    +        return {"segments": collection.segment_statistics().segment_count}
+    +
+    +
+    +def _optimize(options: argparse.Namespace) -> dict[str, object]:
+    +    with _database(options.database) as database:
+    +        collection = database.collection(options.collection)
+    +        collection.optimize()
+    +        return {"segments": collection.segment_statistics().segment_count}
+    +
+    +
+    +def _payload_index(options: argparse.Namespace) -> dict[str, object]:
+    +    with _database(options.database) as database:
+    +        database.collection(options.collection).create_payload_index(
+    +            options.field,
+    +            options.schema,
+    +        )
+    +        return {"field": options.field, "schema": options.schema}
+    +
+    +
+    +def _info(options: argparse.Namespace) -> dict[str, object]:
+    +    with _database(options.database) as database:
+    +        collection = database.collection(options.collection)
+    +        return {
+    +            "count": collection.count(),
+    +            "dimension": collection.config.dimension,
+    +            "distance": collection.config.distance.value,
+    +            "name": collection.name,
+    +            "payload_indexes": collection.payload_index_schemas,
+    +            "segments": collection.segment_statistics().segment_count,
+    +        }
+    +
+    +
+    +def _snapshot(options: argparse.Namespace) -> dict[str, object]:
+    +    with _database(options.database) as database:
+    +        path = database.collection(options.collection).create_snapshot(
+    +            options.destination
+    +        )
+    +        return {"snapshot": str(path)}
+    +
+    +
+    +def _restore(options: argparse.Namespace) -> dict[str, object]:
+    +    path = Database.restore_collection(
+    +        options.snapshot,
+    +        options.database,
+    +        options.collection,
+    +        replace=options.replace,
+    +    )
+    +    return {"collection": options.collection, "path": str(path)}
+    +
+    +
+    +class _database:
+    +    def __init__(self, path: str) -> None:
+    +        self._database = Database.open(path)
+    +
+    +    def __enter__(self) -> Database:
+    +        return self._database
+    +
+    +    def __exit__(self, *_error: object) -> None:
+    +        self._database.close()
+    +
+    +
+    +def _json_id(value: int | UUID) -> int | str:
+    +    return value if isinstance(value, int) else str(value)
+    ```
+
+??? note "File diff: src/miniqdrant/collection.py"
+    ```diff
+    diff --git a/src/miniqdrant/collection.py b/src/miniqdrant/collection.py
+    index fd0756309f34e111e57e6f05b817a7208d209af1..c25fe4595a5bd596d440a952307b0b9ea50e9738 100644
+    --- a/src/miniqdrant/collection.py
+    +++ b/src/miniqdrant/collection.py
+    @@ -1,12 +1,19 @@
+    +"""Collection orchestration for versioned writes, stable reads, and publication.
+    +
+    +This module owns the WAL-before-apply boundary, cross-segment visibility, and
+    +the short-lock/long-build optimizer protocol.  Storage and index modules do not
+    +publish collection state independently.
+    +"""
+    +
+     from __future__ import annotations
+
+     import math
+     import shutil
+    -from collections.abc import Callable, Iterable
+    +from collections.abc import Callable, Iterable, Mapping
+     from concurrent.futures import Future
+     from dataclasses import dataclass
+     from pathlib import Path
+    -from threading import RLock, Thread
+    +from threading import Condition, Lock, RLock, Thread
+     from uuid import uuid4
+
+     from miniqdrant.config import CollectionConfig, config_fingerprint
+    @@ -14,6 +21,7 @@ from miniqdrant.errors import CorruptionError, InvalidFilterError
+     from miniqdrant.filters import Filter
+     from miniqdrant.filters.index import PayloadSchema
+     from miniqdrant.ids import PointId, canonicalize_point_id
+    +from miniqdrant.json_values import freeze_json_object, thaw_json
+     from miniqdrant.lifecycle import Lifecycle
+     from miniqdrant.models import (
+         Point,
+    @@ -61,11 +69,14 @@ class CollectionView:
+             handles: tuple[SegmentHandle, ...],
+             mutable: ImmutableSegment | None,
+             latest: dict[PointId, StoredPoint],
+    +        on_close: Callable[[], None],
+         ) -> None:
+             self._config = config
+             self._handles = handles
+             self._mutable = mutable
+             self._latest = latest
+    +        self._on_close = on_close
+    +        self._close_lock = Lock()
+             self._closed = False
+
+         @property
+    @@ -84,11 +95,15 @@ class CollectionView:
+             )
+
+         def close(self) -> None:
+    -        if self._closed:
+    -            return
+    -        self._closed = True
+    -        for handle in self._handles:
+    -            handle.release()
+    +        with self._close_lock:
+    +            if self._closed:
+    +                return
+    +            self._closed = True
+    +            try:
+    +                for handle in self._handles:
+    +                    handle.release()
+    +            finally:
+    +                self._on_close()
+
+         def __enter__(self) -> CollectionView:
+             return self
+    @@ -122,6 +137,8 @@ class Collection(Lifecycle):
+             self._payload_schemas = payload_schemas
+             self._failure_injector = failure_injector or (lambda _stage: None)
+             self._update_lock = RLock()
+    +        self._view_condition = Condition(self._update_lock)
+    +        self._active_views = 0
+             self._optimizer_lock = RLock()
+             self._mutable = self._new_mutable()
+
+    @@ -251,6 +268,43 @@ class Collection(Lifecycle):
+                 self._apply_wal_record(record)
+                 return record.sequence
+
+    +    def replace_payload(
+    +        self,
+    +        point_ids: Iterable[object],
+    +        payload: Mapping[str, object],
+    +    ) -> int | None:
+    +        validated = thaw_json(freeze_json_object(payload))
+    +        return self._mutate_payload(
+    +            point_ids,
+    +            lambda _current: validated,
+    +        )
+    +
+    +    def merge_payload(
+    +        self,
+    +        point_ids: Iterable[object],
+    +        fields: Mapping[str, object],
+    +    ) -> int | None:
+    +        patch = thaw_json(freeze_json_object(fields))
+    +        return self._mutate_payload(
+    +            point_ids,
+    +            lambda current: {**current, **patch},
+    +        )
+    +
+    +    def delete_payload_keys(
+    +        self,
+    +        point_ids: Iterable[object],
+    +        keys: Iterable[str],
+    +    ) -> int | None:
+    +        removed = tuple(keys)
+    +        if any(not isinstance(key, str) for key in removed):
+    +            raise ValueError("payload keys must be strings")
+    +        return self._mutate_payload(
+    +            point_ids,
+    +            lambda current: {
+    +                key: value for key, value in current.items() if key not in removed
+    +            },
+    +        )
+    +
+         def create_payload_index(self, path: str, schema: PayloadSchema | str) -> None:
+             self._ensure_open()
+             normalized = PayloadSchema(schema)
+    @@ -267,7 +321,7 @@ class Collection(Lifecycle):
+
+         def flush(self, *, indexed: bool = False) -> None:
+             self._ensure_open()
+    -        with self._update_lock:
+    +        with self._optimizer_lock, self._update_lock:
+                 if self._mutable.total_count == 0:
+                     return
+                 segment_id = f"seg-{uuid4().hex}"
+    @@ -326,7 +380,14 @@ class Collection(Lifecycle):
+                     tuple(handle.segment for handle in handles),
+                     mutable_records,
+                 )
+    -            return CollectionView(self._config, handles, mutable, latest)
+    +            self._active_views += 1
+    +            return CollectionView(
+    +                self._config,
+    +                handles,
+    +                mutable,
+    +                latest,
+    +                self._release_view,
+    +            )
+
+         def segment_statistics(self) -> SegmentStatistics:
+             self._ensure_open()
+    @@ -345,6 +406,7 @@ class Collection(Lifecycle):
+         def optimize(self, *, gate: OptimizationGate | None = None) -> None:
+             self._ensure_open()
+             with self._optimizer_lock:
+    +            self._ensure_open()
+                 self._optimize(gate)
+
+         def start_optimize(
+    @@ -394,13 +456,17 @@ class Collection(Lifecycle):
+         def close(self) -> None:
+             if not self._mark_closed():
+                 return
+    -        self._wal.flush()
+    -        self._wal.close()
+    +        with self._optimizer_lock, self._view_condition:
+    +            while self._active_views:
+    +                self._view_condition.wait()
+    +            self._wal.flush()
+    +            self._wal.close()
+
+         def simulate_process_loss(self) -> None:
+             if not self._mark_closed():
+                 return
+    -        self._wal.close()
+    +        with self._optimizer_lock, self._update_lock:
+    +            self._wal.close()
+
+         def _new_mutable(self) -> MutableSegment:
+             mutable = MutableSegment(self._config)
+    @@ -408,6 +474,45 @@ class Collection(Lifecycle):
+                 mutable.create_payload_index(path, schema)
+             return mutable
+
+    +    def _release_view(self) -> None:
+    +        with self._view_condition:
+    +            if self._active_views < 1:
+    +                raise RuntimeError("collection view accounting underflow")
+    +            self._active_views -= 1
+    +            if self._active_views == 0:
+    +                self._view_condition.notify_all()
+    +
+    +    def _mutate_payload(
+    +        self,
+    +        point_ids: Iterable[object],
+    +        transform: Callable[[dict[str, object]], Mapping[str, object]],
+    +    ) -> int | None:
+    +        self._ensure_open()
+    +        identifiers = tuple(
+    +            dict.fromkeys(canonicalize_point_id(item) for item in point_ids)
+    +        )
+    +        if not identifiers:
+    +            raise ValueError("payload mutation must contain point ids")
+    +        with self._update_lock:
+    +            latest = self._latest_records()
+    +            points = tuple(
+    +                Point(
+    +                    point.id,
+    +                    point.vector,
+    +                    transform(thaw_json(point.payload)),
+    +                )
+    +                for point_id in identifiers
+    +                if (point := latest.get(point_id)) is not None and not point.deleted
+    +            )
+    +            if not points:
+    +                return None
+    +            for point in points:
+    +                validate_point(point, self._config)
+    +            record = self._wal.append(UpsertOperation(points))
+    +            self._failure_injector("after_wal_fsync")
+    +            self._apply_wal_record(record)
+    +            return record.sequence
+    +
+         def _apply_wal_record(self, record: WalRecord) -> None:
+             if isinstance(record.operation, UpsertOperation):
+                 for point in record.operation.points:
+    @@ -466,6 +571,11 @@ class Collection(Lifecycle):
+                         ),
+                         replay_boundary=replay_boundary,
+                     )
+    +                # Writes may arrive while the replacement is built without the
+    +                # update lock.  Records at or before the captured WAL boundary
+    +                # are already represented by `image`; strictly newer records
+    +                # must survive in the next mutable segment or publication would
+    +                # make acknowledged concurrent writes disappear.
+                     late_records = tuple(
+                         record
+                         for record in self._mutable.iter_records()
+    @@ -556,20 +666,24 @@ def _search(
+             raise InvalidFilterError("search filter must be a Filter")
+         if request.score_threshold is not None and not math.isfinite(request.score_threshold):
+             raise ValueError("score threshold must be finite")
+    -    local_limit = request.limit + max(0, len(segments) - 1)
+         segment_results = tuple(
+             segment.search(
+                 SegmentSearchRequest(
+                     vector=tuple(request.vector),
+    -                limit=local_limit,
+    +                limit=min(
+    +                    segment.live_count,
+    +                    request.limit + _stale_live_count(segment, latest),
+    +                ),
+                     filter=request.filter,
+                     exact=request.exact,
+                     ef_search=request.ef_search,
+                 )
+             )
+             for segment in segments
+    +        if segment.live_count
+         )
+         collector = TopK(request.limit)
+    +    offered_point_ids: set[PointId] = set()
+         for result in segment_results:
+             for candidate in result.candidates:
+                 visible = latest.get(candidate.point_id)
+    @@ -584,6 +698,9 @@ def _search(
+                     and candidate.score < request.score_threshold
+                 ):
+                     continue
+    +            if candidate.point_id in offered_point_ids:
+    +                continue
+    +            offered_point_ids.add(candidate.point_id)
+                 collector.offer(candidate.point_id, candidate.score)
+         hits = tuple(
+             Collection._project_hit(latest[item.point_id], item.score, request)
+    @@ -593,3 +710,20 @@ def _search(
+             hits,
+             plan=tuple(result.strategy for result in segment_results),
+         )
+    +
+    +
+    +def _stale_live_count(
+    +    segment: ImmutableSegment,
+    +    latest: dict[PointId, StoredPoint],
+    +) -> int:
+    +    # A segment-local Top-K can be filled with old versions that collection-level
+    +    # visibility later rejects.  Ask the segment for one extra candidate per
+    +    # stale live record so enough visible candidates remain for the global
+    +    # Top-K.  This correctness buffer requires a full segment scan per search.
+    +    return sum(
+    +        visible is None
+    +        or visible.deleted
+    +        or visible.version != record.version
+    +        for record in segment.iter_live()
+    +        for visible in (latest.get(record.id),)
+    +    )
+    ```
+
+??? note "File diff: src/miniqdrant/labs/filtering.py"
+    ```diff
+    diff --git a/src/miniqdrant/labs/filtering.py b/src/miniqdrant/labs/filtering.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..b3670c9134f85b1bdd9e9ef9336db295acb8300e
+    --- /dev/null
+    +++ b/src/miniqdrant/labs/filtering.py
+    @@ -0,0 +1,33 @@
+    +from __future__ import annotations
+    +
+    +from pathlib import Path
+    +
+    +from miniqdrant import Database, Distance, Filter, Match, PayloadSchema, Point, SearchRequest
+    +
+    +
+    +def run_filtering_lab(path: str | Path) -> dict[str, object]:
+    +    database = Database.open(path)
+    +    try:
+    +        collection = database.create_collection(
+    +            "items",
+    +            dimension=2,
+    +            distance=Distance.DOT,
+    +        )
+    +        collection.upsert(
+    +            [
+    +                Point(1, (1.0, 0.0), {"tenant": "a"}),
+    +                Point(2, (0.9, 0.0), {"tenant": "b"}),
+    +                Point(3, (0.8, 0.0), {"tenant": "a"}),
+    +            ]
+    +        )
+    +        collection.create_payload_index("tenant", PayloadSchema.KEYWORD)
+    +        result = collection.search(
+    +            SearchRequest(
+    +                (1.0, 0.0),
+    +                10,
+    +                filter=Filter(must=(Match("tenant", "a"),)),
+    +            )
+    +        )
+    +        return {"matching_ids": [hit.id for hit in result.hits], "plan": result.plan}
+    +    finally:
+    +        database.close()
+    ```
+
+??? note "File diff: src/miniqdrant/labs/recall.py"
+    ```diff
+    diff --git a/src/miniqdrant/labs/recall.py b/src/miniqdrant/labs/recall.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..dab6043891c577d1504487b078a7010dae9a745d
+    --- /dev/null
+    +++ b/src/miniqdrant/labs/recall.py
+    @@ -0,0 +1,58 @@
+    +from __future__ import annotations
+    +
+    +import random
+    +
+    +from miniqdrant.config import CollectionConfig, Distance, HnswConfig, OptimizerConfig
+    +from miniqdrant.models import Point, validate_point
+    +from miniqdrant.segment import ImmutableSegment, SegmentSearchRequest
+    +
+    +
+    +def run_recall_lab(
+    +    *,
+    +    seed: int = 7,
+    +    points: int = 200,
+    +    queries: int = 10,
+    +) -> dict[str, object]:
+    +    generator = random.Random(seed)
+    +    config = CollectionConfig(
+    +        dimension=8,
+    +        distance=Distance.DOT,
+    +        hnsw=HnswConfig(m=8, ef_construct=40, ef_search=32, seed=seed),
+    +        optimizer=OptimizerConfig(indexing_threshold_points=1),
+    +    )
+    +    records = tuple(
+    +        validate_point(
+    +            Point(
+    +                point_id,
+    +                tuple(generator.uniform(-1.0, 1.0) for _ in range(8)),
+    +                {},
+    +            ),
+    +            config,
+    +        )
+    +        for point_id in range(points)
+    +    )
+    +    versioned = tuple(
+    +        type(record)(
+    +            record.id,
+    +            record.vector,
+    +            record.payload,
+    +            version=1,
+    +            deleted=False,
+    +        )
+    +        for record in records
+    +    )
+    +    segment = ImmutableSegment.build(config, versioned, indexed=True)
+    +    recalls = []
+    +    for _ in range(queries):
+    +        query = tuple(generator.uniform(-1.0, 1.0) for _ in range(8))
+    +        approximate = segment.search(SegmentSearchRequest(query, 5))
+    +        exact = segment.search(SegmentSearchRequest(query, 5, exact=True))
+    +        approximate_ids = {candidate.point_id for candidate in approximate.candidates}
+    +        exact_ids = {candidate.point_id for candidate in exact.candidates}
+    +        recalls.append(len(approximate_ids & exact_ids) / max(1, len(exact_ids)))
+    +    return {
+    +        "points": points,
+    +        "queries": queries,
+    +        "recall_at_5": sum(recalls) / max(1, len(recalls)),
+    +        "seed": seed,
+    +    }
+    ```
+
+??? note "File diff: src/miniqdrant/labs/recovery.py"
+    ```diff
+    diff --git a/src/miniqdrant/labs/recovery.py b/src/miniqdrant/labs/recovery.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..8780af9acefacf0bfee1c7d16e2847d4a007cc0f
+    --- /dev/null
+    +++ b/src/miniqdrant/labs/recovery.py
+    @@ -0,0 +1,29 @@
+    +from __future__ import annotations
+    +
+    +from pathlib import Path
+    +
+    +from miniqdrant import Database, Distance, Point
+    +
+    +
+    +def run_recovery_lab(path: str | Path) -> dict[str, object]:
+    +    database = Database.open(path)
+    +    collection = database.create_collection(
+    +        "items",
+    +        dimension=2,
+    +        distance=Distance.DOT,
+    +    )
+    +    collection.upsert(
+    +        [
+    +            Point(1, (1.0, 0.0), {}),
+    +            Point(2, (0.0, 1.0), {}),
+    +        ]
+    +    )
+    +    collection.flush()
+    +    database.close()
+    +
+    +    reopened = Database.open(path)
+    +    try:
+    +        restored = reopened.collection("items").retrieve([1, 2])
+    +        return {"restored_ids": [point.id for point in restored]}
+    +    finally:
+    +        reopened.close()
+    ```
+
+??? note "File diff: src/miniqdrant/labs/segments.py"
+    ```diff
+    diff --git a/src/miniqdrant/labs/segments.py b/src/miniqdrant/labs/segments.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..0295230a7ab7aacc77da7f78262799a1b7fcb6f5
+    --- /dev/null
+    +++ b/src/miniqdrant/labs/segments.py
+    @@ -0,0 +1,25 @@
+    +from __future__ import annotations
+    +
+    +from pathlib import Path
+    +
+    +from miniqdrant import Database, Distance, Point
+    +
+    +
+    +def run_segments_lab(path: str | Path) -> dict[str, int]:
+    +    database = Database.open(path)
+    +    try:
+    +        collection = database.create_collection(
+    +            "items",
+    +            dimension=2,
+    +            distance=Distance.DOT,
+    +        )
+    +        collection.upsert([Point(1, (1.0, 0.0), {})])
+    +        collection.flush()
+    +        collection.upsert([Point(2, (0.0, 1.0), {})])
+    +        collection.flush()
+    +        before = collection.segment_statistics().segment_count
+    +        collection.optimize()
+    +        after = collection.segment_statistics().segment_count
+    +        return {"before_segments": before, "after_segments": after}
+    +    finally:
+    +        database.close()
+    ```
+
+??? note "File diff: src/miniqdrant/persistence/manifest.py"
+    ```diff
+    diff --git a/src/miniqdrant/persistence/manifest.py b/src/miniqdrant/persistence/manifest.py
+    index 45b10857fe07bd363e14595914f8ae51db894caa..711d424a19f2f95d8b99581d574c04a7e51f24bc 100644
+    --- a/src/miniqdrant/persistence/manifest.py
+    +++ b/src/miniqdrant/persistence/manifest.py
+    @@ -3,6 +3,7 @@ from __future__ import annotations
+     import hashlib
+     import json
+     import os
+    +import re
+     from collections.abc import Callable
+     from dataclasses import asdict, dataclass
+     from pathlib import Path
+    @@ -10,6 +11,8 @@ from pathlib import Path
+     from miniqdrant.errors import CorruptionError
+     from miniqdrant.persistence.fsync import fsync_directory
+
+    +_SEGMENT_ID = re.compile(r"^seg-[A-Za-z0-9_-]+$")
+    +
+
+     @dataclass(frozen=True, slots=True)
+     class Manifest:
+    @@ -24,6 +27,10 @@ class Manifest:
+             if self.replay_boundary < 0:
+                 raise ValueError("manifest replay boundary must be non-negative")
+             object.__setattr__(self, "segment_ids", tuple(self.segment_ids))
+    +        if len(set(self.segment_ids)) != len(self.segment_ids):
+    +            raise ValueError("manifest segment IDs must be unique")
+    +        if any(not _SEGMENT_ID.fullmatch(segment_id) for segment_id in self.segment_ids):
+    +            raise ValueError("manifest contains an unsafe segment ID")
+
+         @property
+         def filename(self) -> str:
+    @@ -127,4 +134,3 @@ def _write_fsynced(path: Path, value: bytes) -> None:
+             stream.write(value)
+             stream.flush()
+             os.fsync(stream.fileno())
+    -
+    ```
+
+**What it is and why it appears**
+
+The central mechanism is concurrency and acceptance closure. Flush and optimize can race, while cross-segment merge can surface the same point id more than once unless lifecycle ownership is tightened.
+
+**Runtime role**
+
+lifecycle mutations serialize at publication and merged search emits only the newest live identity for each point.
+
+**Statement understanding**
+
+The durable boundary is this: lifecycle mutations serialize at publication and merged search emits only the newest live identity for each point.
+
+#### Package, fixture, and project support
+
+Keep exports, test corpora, dependencies, and the runtime environment reproducible.
+
+??? note "Supporting file diffs (1 file)"
+    **`src/miniqdrant/labs/__init__.py`**
+
+    ```diff
+    diff --git a/src/miniqdrant/labs/__init__.py b/src/miniqdrant/labs/__init__.py
+    new file mode 100644
+    index 0000000000000000000000000000000000000000..8d874de6aff89ffe503652dd60410cac80c9b1af
+    --- /dev/null
+    +++ b/src/miniqdrant/labs/__init__.py
+    @@ -0,0 +1 @@
+    +"""Deterministic experiments for the mechanisms exposed by MiniQdrant."""
+    ```
+
+
+### Verification evidence
+
+Run `uv run pytest -q $(cat journey/stages/14-concurrency-acceptance/tests.txt)`, then use Journey Check to compare the cumulative source with the canonical Stage.
+
+### Durable takeaways
+
+The durable boundary is this: lifecycle mutations serialize at publication and merged search emits only the newest live identity for each point.
+
+### Explain it in your own words
+
+Explain the failure window this Stage closes, how runtime state changes, and which statement protects the boundary.
+
+### Textbook
+
+[Chapter 9](https://github.com/system-in-miniature/mini-qdrant/blob/main/docs/tutorial/09-optimizer.md)
+
+[Complete reference patch / 完整参考补丁](https://github.com/system-in-miniature/mini-qdrant/blob/main/journey/stages/14-concurrency-acceptance/stage.patch)

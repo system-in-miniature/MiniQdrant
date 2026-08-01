@@ -1,0 +1,2 @@
+tests/acceptance/test_exact_collection.py
+tests/contract/test_collection.py

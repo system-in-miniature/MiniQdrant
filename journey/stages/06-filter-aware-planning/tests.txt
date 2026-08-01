@@ -1,0 +1,3 @@
+tests/query/test_payload_index.py
+tests/query/test_plan_parity.py
+tests/query/test_planner.py

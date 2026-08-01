@@ -1,0 +1,9 @@
+failure_files = ["tests/acceptance/test_snapshot_roundtrip.py", "tests/reliability/test_snapshot.py", "tests/reliability/test_snapshot_restore_failure.py"]
+
+[[blocks]]
+id = "mechanism"
+title_en = "Atomic snapshot and restore mechanism"
+title_zh = "原子 Snapshot 与 Restore机制"
+summary_en = "a snapshot contains one declared generation and restore either publishes the whole verified copy or leaves the destination unchanged."
+summary_zh = "Snapshot 只包含一个声明的 Generation，Restore 要么发布完整校验副本，要么保持目标不变。"
+files = ["src/miniqdrant/collection.py", "src/miniqdrant/database.py", "src/miniqdrant/persistence/snapshot.py"]

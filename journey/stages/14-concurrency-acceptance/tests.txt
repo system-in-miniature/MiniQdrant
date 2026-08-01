@@ -1,0 +1,7 @@
+tests/acceptance/test_cross_segment_search.py
+tests/acceptance/test_final_acceptance.py
+tests/acceptance/test_labs.py
+tests/concurrency/test_online_optimize.py
+tests/contract/test_collection.py
+tests/contract/test_lifecycle.py
+tests/storage/test_manifest.py

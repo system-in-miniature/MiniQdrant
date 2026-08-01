@@ -1,0 +1,18 @@
+failure_files = ["tests/acceptance/test_exact_collection.py", "tests/contract/test_collection.py"]
+
+[[blocks]]
+id = "mechanism"
+title_en = "Collection operations mechanism"
+title_zh = "Collection 操作闭环机制"
+summary_en = "public mutations validate completely before publication and reads never expose caller-owned mutable payload state."
+summary_zh = "公共修改在发布前完成全部校验，读取绝不暴露调用方可变 Payload 状态。"
+files = ["src/miniqdrant/collection.py", "src/miniqdrant/database.py", "src/miniqdrant/lifecycle.py"]
+
+[[blocks]]
+id = "supporting"
+title_en = "Package, fixture, and project support"
+title_zh = "包、Fixture 与工程支撑"
+summary_en = "Keep exports, test corpora, dependencies, and the runtime environment reproducible."
+summary_zh = "保持包导出、测试语料、依赖与运行环境可复现。"
+files = ["src/miniqdrant/__init__.py"]
+supporting = true

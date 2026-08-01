@@ -1,0 +1,5 @@
+tests/concurrency/test_online_optimize.py
+tests/reliability/test_optimizer_publish.py
+tests/storage/test_merge.py
+tests/storage/test_vacuum.py
+tests/unit/test_optimizer_policy.py

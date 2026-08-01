@@ -1,0 +1,119 @@
+[project]
+name = "MiniQdrant"
+package = "miniqdrant"
+repository_url = "https://github.com/system-in-miniature/mini-qdrant"
+base = "21f015c"
+owned_roots = ["src/miniqdrant", "tests"]
+owned_files = ["pyproject.toml", "uv.lock"]
+excluded_files = [
+  "src/miniqdrant/__pycache__/__init__.cpython-312.pyc",
+  "src/miniqdrant/__pycache__/config.cpython-312.pyc",
+  "src/miniqdrant/__pycache__/errors.cpython-312.pyc",
+  "src/miniqdrant/__pycache__/ids.cpython-312.pyc",
+  "src/miniqdrant/__pycache__/json_values.cpython-312.pyc",
+  "src/miniqdrant/__pycache__/models.cpython-312.pyc",
+  "tests/__pycache__/test_project_contract.cpython-312-pytest-9.1.1.pyc",
+  "tests/unit/__pycache__/test_domain.cpython-312-pytest-9.1.1.pyc",
+  "tests/test_docs_homepage.py",
+]
+
+[[stages]]
+number = 1
+slug = "domain-contracts"
+chapter = 2
+source = "a0bce08"
+tests = ["tests/unit/test_domain.py"]
+
+[[stages]]
+number = 2
+slug = "distance-topk"
+chapter = 2
+source = "202e235"
+
+[[stages]]
+number = 3
+slug = "payload-filters"
+chapter = 6
+source = "2e1af85"
+
+[[stages]]
+number = 4
+slug = "mutable-segment"
+chapter = 4
+source = "4ab2804"
+
+[[stages]]
+number = 5
+slug = "collection-operations"
+chapter = 2
+source = "474802e"
+
+[[stages]]
+number = 6
+slug = "filter-aware-planning"
+chapter = 7
+source = "4e3ff96"
+
+[[stages]]
+number = 7
+slug = "hnsw-search"
+chapter = 5
+source = "7fb3095"
+
+[[stages]]
+number = 8
+slug = "immutable-segments"
+chapter = 4
+source = "8b59cbb"
+
+[[stages]]
+number = 9
+slug = "framed-wal"
+chapter = 3
+source = "119de3a"
+
+[[stages]]
+number = 10
+slug = "manifest-recovery"
+chapter = 3
+source = "1111721"
+
+[[stages]]
+number = 11
+slug = "online-optimization"
+chapter = 9
+source = "75732ca"
+
+[[stages]]
+number = 12
+slug = "quantized-rescore"
+chapter = 8
+source = "2302062"
+
+[[stages]]
+number = 13
+slug = "snapshot-restore"
+chapter = 10
+source = "e75e9dd"
+
+[[stages]]
+number = 14
+slug = "concurrency-acceptance"
+chapter = 9
+source = "b511f58"
+tests = [
+  "tests/acceptance/test_cross_segment_search.py",
+  "tests/acceptance/test_final_acceptance.py",
+  "tests/acceptance/test_labs.py",
+  "tests/concurrency/test_online_optimize.py",
+  "tests/contract/test_collection.py",
+  "tests/contract/test_lifecycle.py",
+  "tests/storage/test_manifest.py",
+]
+
+[[stages]]
+number = 15
+slug = "executable-labs"
+chapter = 10
+source = "HEAD"
+tests = ["tests/acceptance/test_labs.py"]

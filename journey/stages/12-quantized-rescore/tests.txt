@@ -1,0 +1,2 @@
+tests/index/test_quantization.py
+tests/query/test_quantized_rescore.py

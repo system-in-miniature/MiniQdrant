@@ -1,0 +1,3 @@
+tests/acceptance/test_snapshot_roundtrip.py
+tests/reliability/test_snapshot.py
+tests/reliability/test_snapshot_restore_failure.py
